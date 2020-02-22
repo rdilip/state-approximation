@@ -24,7 +24,15 @@ def disentangle_S2(theta,eps = 1e-9, max_iter = 200):
         if m > 1:
             go = Ss[-2] - Ss[-1] > eps
         m+=1
-    return theta, U.reshape([d1, d2, d1, d2])
+    return theta, U.reshape([d1, d2, d1, d2]), dict(Ss=Ss)
+
+def disentangle_brute(theta):
+    mL, d1, d2, mR = theta.shape
+    v0 = np.random.random(int(((d1*d2)**2 - d1*d2) / 2))
+    res = minimize(renyi_entropy_v, x0=v0, args=(theta))
+    U = orthogonal(res.x, d1*d2).reshape([d1,d2,d1,d2])
+    Utheta = np.tensordot(U, theta, [[2,3],[1,2]]).transpose([2,0,1,3])
+    return(Utheta, U)
 
 def U2(theta):
     chi = theta.shape
@@ -49,7 +57,7 @@ def orthogonal(v,D):
             cnt = cnt + 1
     return np.dot(np.eye(D)+A,np.linalg.inv(np.eye(D)-A))
 
-def renyi_entropy_v(Psi,v):
+def renyi_entropy_v(v, Psi):
     chi1,d1,d2,chi2 = Psi.shape[0],Psi.shape[1],Psi.shape[2],Psi.shape[3]
     D = d1*d2
     U = orthogonal(v,D).reshape([d1,d2,d1,d2])

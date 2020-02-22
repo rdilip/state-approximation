@@ -1,6 +1,7 @@
 import numpy as np
 import warnings
 import pickle, sys
+from disentanglers import disentangle_S2
 
 def renyi(s, n):
     """n-th Renyi entropy from Schmidt spectrum s

@@ -15,12 +15,17 @@ import warnings
 
 
 def group_legs(a, axes):
-    """ Given list of lists like axes = [ [l1, l2], [l3], [l4 . . . ]]
-	
-		does a transposition of np.array "a" according to l1 l2 l3... followed by a reshape according to parantheses.
-		
-		Return the reformed tensor along with a "pipe" which can be used to undo the move
-	"""
+    """ 
+    Given list of lists like axes = [ [l1, l2], [l3], [l4 . . . ]]
+    does a transposition of np.array "a" according to l1 l2 l3...
+    followed by a reshape according to parantheses.
+
+    Return the reformed tensor along with a "pipe" which can be used to
+    undo the move.
+
+    pipe has the format of the old shape, and the permutation of the legs.
+          
+    """
 
     nums = [len(k) for k in axes]
 
@@ -121,7 +126,6 @@ def mps_ungroup_legs(Psi, pipes):
 
 def mps_invert(Psi):
     """ Applies spatial reflection along length of MPS"""
-
     np = Psi[0].ndim - 2
     return [b.transpose(list(range(np)) + [-1, -2]) for b in Psi[::-1]]
 
@@ -248,7 +252,21 @@ def mps_entanglement_spectrum(Psi, site_spectrum=None):
     return Ss[::-1]
 
 
-def mpo_on_mpo(X, Y, form=None):
+def mpo_on_mpo(X, Y):
+    if X[0].ndim != 4 or Y[0].ndim != 4:
+        raise ValueError
+    out = []
+    # Sometimes get a memoryerror here...i wonder why
+    for i in range(len(X)):
+        prod_xy = np.tensordot(X[i], Y[i], [1,0])
+        try:
+            prod_xy = group_legs(prod_xy, [[0],[3],[1,4],[2,5]])[0]
+        except MemoryError:
+            breakpoint()
+        out.append(prod_xy)
+    return(out)
+
+def mpo_on_mpo_deprecated(X, Y, form=None):
     """ Multiplies two two-sided MPS, XY = X*Y and optionally puts in a canonical form
 	"""
     if X[0].ndim != 4 or Y[0].ndim != 4:
@@ -426,9 +444,6 @@ def svd(theta, compute_uv=True, full_matrices=True):
                              full_matrices=full_matrices)
 
 
-        A[np.where(np.abs(A) < 1.e-10)] = 0
-        B[np.where(np.abs(B) < 1.e-10)] = 0
-        C[np.where(np.abs(C) < 1.e-10)] = 0
 
         return((A,B,C))
 
@@ -535,7 +550,6 @@ def svd_theta(theta, truncation_par):
         ])
     else:
         eta_new = truncation_par.get('chi_max', len(s))
-
     nrm_t = np.linalg.norm(s[:eta_new])
     A = U[:, :eta_new]
     SB = ((V[:eta_new, :].T) * s[:eta_new] / nrm_t).T

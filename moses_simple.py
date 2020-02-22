@@ -1,10 +1,7 @@
 import numpy as np
 from renyin_splitter import split_psi as split_psi
 from splitter import svd_split
-from state_approximation import contract_ABS
 import warnings
-
-
 
 ### Convention for MPS to be split: Psi = [B0, B1, ...]
 #      3
@@ -113,12 +110,7 @@ def moses_move(Psi, truncation_par=None):
     """
     if truncation_par is None:
         truncation_par = {
-            'bond_dimensions': {
-                'etaH_max': 4,
-                'etaV_max': 4,
-                'chiV_max': 4,
-                'chiH_max': 4
-            },
+            'bond_dimensions': dict(eta_max=500, chi_max=500),
             'p_trunc': 1e-6
         }
     if 'eta_max' in truncation_par['bond_dimensions']:
@@ -162,11 +154,11 @@ def moses_move(Psi, truncation_par=None):
                    
         pref = 'dL'
         if j == L - 1:
-            dL = 1
-            dR = np.min([etaH_max, Tri.shape[0]])
+            dR = 1
+            dL = np.min([etaH_max, Tri.shape[0]])
             pref = 'dR'
-
-        if j < L:
+        
+        if j < L - 1:
             a, S, B = split_psi(Tri,
                                   dL,
                                   dR,
@@ -178,9 +170,6 @@ def moses_move(Psi, truncation_par=None):
                                   pref=pref)
 
             dL, dR = a.shape[1], a.shape[2]
-            C = contract_ABS(a, B, S)
-            print(np.allclose(C, Tri, 1.e-8))
-            breakpoint()
 
             B = B.reshape((dR, B.shape[1], eta, pR)).transpose([0, 3, 2, 1])
             # B now in shape [dR, pR, eta, -1]
@@ -196,6 +185,7 @@ def moses_move(Psi, truncation_par=None):
                 chi = Psi[j + 1].shape[3]
                 Pent = np.tensordot(S, Psi[j + 1], axes=[[1], [2]])
             else:
+                breakpoint()
                 Lambda[j] = Lambda[j] * S
             chiV = dL
             eta = B.shape[-1]
