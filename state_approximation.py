@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from math import floor
 from scipy.stats import unitary_group
 from moses_simple import moses_move as moses_move_simple
+import gc
 
 def evolve_state(L, T, dt, H=None):
     """ Gives a physical state by performing TEBD-style time evolution on 
@@ -226,6 +227,7 @@ def contract_all_mpos(mpos):
     out = mpos[0]
     for mpo in mpos[1:]:
         out = mpo_on_mpo(out, mpo)
+        gc.collect()
     return(out)
 
 def shift_leg(X, Y, leg, bond_dim):
@@ -262,6 +264,89 @@ def H_TFI(L, g, J=1):
         H.append((-J * np.kron(sz, sz) - gr* np.kron(id, sx) -\
                     gl * np.kron(sx, id)).reshape([d]*4))
     return H
+
+def diagonal_expansion(Psi):
+    """ This performs an expansion where the tensor network shifts diagonally.
+      |  |  |  |  | 
+    --A--A--A--A--A--
+
+
+          |  |  |  |  | 
+       .--A--A--A--A--A--
+       |  |  |  |  |  |
+       |  |  |  |  | 
+     --A--A--A--A--A--
+
+    etc. 
+
+    At some point I should adjust these diagrams so they can be mapped onto
+    inputs...
+    """
+    # Check MPO
+    if Psi[0].ndim == 3:
+        Psi = mps2mpo(Psi)
+    d = Psi[0].shape[0]
+    # Grouping first and second tensor
+    pW1, pE1, chiS1, chiN1 = Psi[0].shape
+    pW2, pE2, chiS2, chiN2 = Psi[1].shape
+    assert chiS2 == chiN1
+    assert pE1 == pE2 == chiS1 == 1
+
+    psi = np.tensordot(Psi[0], Psi[1], [3,2]).transpose([0,3,1,4,2,5])
+    psi = psi.reshape([pW1*pW2, pE1*pE2, chiS1, chiN2])
+    Psi[1] = psi
+    Psi.pop(0)
+    A0, Lambda = moses_move_simple(Psi)
+    # Splitting physical leg out of first tensor
+    psi = A0[0]
+    pL, pR, chiS, chiN = psi.shape
+    assert pL == d*d
+    psi = psi.reshape(d, d, pR, chiS, chiN).transpose([0,3,1,2,4])
+    psi = psi.reshape(d*chiS, d*pR*chiN)
+    psi0, psi1 = np.linalg.qr(psi)
+    psi0 = psi0.reshape(d, chiS, -1, 1).transpose([0,3,1,2])
+    psi1 = psi1.reshape(-1,d,pR,chiN).transpose([1,2,0,3])
+    A0[0] = psi1
+    A0.insert(0, psi0)
+    
+    # Splitting last tensor of A0
+    psi = A0[-1]
+    pL, pR, chiS, chiN = psi.shape
+    assert pR == 4
+    assert chiN == 1
+    psi = psi.reshape(pL, d, d, chiS, chiN).transpose([0,1,3,4,2]).reshape(pL,d,chiS,d)
+    A0[-1] = psi
+
+    # send second physical leg to the top
+
+    # Splitting last tensor of Lambda
+    psi = Lambda[-1]
+    pL, pR, chiS, chiN = Lambda[-1].shape
+    assert(pR == chiN == 1)
+    assert pL == 4
+    psi = psi.reshape(d,d,pR,chiS,chiN).transpose([0,2,3,1,4])
+    psi = psi.reshape(d*pR*chiS,d)
+    q, r = np.linalg.qr(psi)
+    q = q.reshape(d,pR,chiS,-1)
+    r = r.reshape(-1,d,1,1).transpose([1,2,0,3])
+    Lambda[-1] = q
+    Lambda.append(r)
+
+    return(A0, Lambda)
+
+def contract_diagonal_expansion(A0, Lambda):
+    """ Contraction is not just mpo on mpo, because of the overhand on each
+    side."""
+    out = A0.copy()
+    for i in range(1, len(A0)):
+        prod = np.tensordot(A0[i], Lambda[i-1], [1,0])
+        prod = group_legs(prod, [[0],[3],[1,4],[2,5]])[0]
+        out[i] = prod
+    last_tensor = np.tensordot(A0[-1], Lambda[-2], [1,0])
+    last_tensor = np.tensordot(last_tensor, Lambda[-1], [[2,5],[0,2]])
+    last_tensor = group_legs(last_tensor, [[0],[2,4],[1,3],[5]])[0]
+    out[-1] = last_tensor
+    return(out)
 
 if __name__ == '__main__':
 
