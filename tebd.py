@@ -4,9 +4,8 @@ import scipy
 from scipy import linalg
 import matplotlib.pyplot as plt
 
-def H_TFI(L, g):
+def H_TFI(L, g, J=1.0):
     H = []
-    J = 1.0
     s_z = np.array([[1,0],[0,-1]])
     id = np.eye(2)
     s_x = np.array([[0,1],[1,0]])
@@ -19,6 +18,22 @@ def H_TFI(L, g):
         h = -J * np.kron(s_z, s_z) - gL * np.kron(s_x, id) - gR * np.kron(id, s_x) 
         H.append(h.reshape([2]*4))
     return H
+
+def H_dH(L, dJ):
+    """
+    Hamiltonian for the dimerized Heisenberg model, with h=0. I think the
+    Hamiltonian is the same as that of the transverse field ising model, but
+    with the J coupling shifted up or down for odd or even bonds
+    """
+    bonds = []
+    H_odd = H_TFI(L, g=1.0, J=1.0 + dJ)
+    H_even = H_TFI(L, g=1.0, J=1.0 - dJ)
+    for i in range(L-1):
+        if i % 2 == 1:
+            bonds.append(H_odd[i])
+        else:
+            bonds.append(H_even[i])
+    return bonds
 
 def make_U(H_bonds, dt):
     d = 2
@@ -98,7 +113,9 @@ def tebd_single_pass(Psi, U, order='R', ops=None):
     return(Psi, info['exp_vals'])
 
 def tebd(L, g, dt):
-    H = H_TFI(L, g)
+    #H = H_TFI(L, g)
+    H = H_dH(L, 0.1)
+
     U = make_U(H, dt)
     sz = np.array([[1,0],[0,-1]])
 

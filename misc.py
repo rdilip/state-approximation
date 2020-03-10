@@ -10,6 +10,7 @@ import numpy as np
 import scipy as sp
 import scipy.linalg
 import warnings
+import gc
 
 ###Tensor stuff
 
@@ -54,11 +55,11 @@ def group_legs(a, axes):
 
 
 def ungroup_legs(a, pipe):
-    """
-		Given the output of group_legs,  recovers the original tensor (inverse operation)
+    """ Given the output of group_legs,  recovers the original tensor (inverse
+    operation)
 		
-		For any singleton grouping [l],  allows the dimension to have changed (the new dim is inferred from 'a').
-	"""
+      For any singleton grouping [l],  allows the dimension to have changed
+      (the new dim is inferred from 'a').  """
     if a.ndim != len(pipe[0]):
         raise ValueError
     shape = []
@@ -71,7 +72,6 @@ def ungroup_legs(a, pipe):
     a = a.reshape(shape)
     a = a.transpose(pipe[1])
     return a
-
 
 #### MPS / MPO STUFF
 def transpose_mpo(Psi):

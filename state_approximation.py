@@ -1,61 +1,14 @@
 from renyin_splitter import split_psi 
-from misc import group_legs, ungroup_legs, mps_2form, mps_overlap, mpo_on_mpo
+from rfunc import pad
+from misc import group_legs, ungroup_legs, mps_2form, mps_overlap, mpo_on_mpo,\
+     mps_entanglement_spectrum
 import numpy as np
 import scipy
 from scipy.linalg import expm
 import matplotlib.pyplot as plt
-from math import floor
 from scipy.stats import unitary_group
 from moses_simple import moses_move as moses_move_simple
 import gc
-
-def evolve_state(L, T, dt, H=None):
-    """ Gives a physical state by performing TEBD-style time evolution on 
-    a product state.
-    
-    Only set up for local hilbert space 2 and first order trotterization.
-    """
-    d = 2
-    if H is None:
-        H = H_TFI(L, g=0.5, J = 1.0)
-    if H[0].ndim == 4:
-        H = [h.reshape(d*d,d*d) for h in H]
-
-    U = [expm(-dt * h).reshape([d]*4) for h in H]
-
-    b = np.zeros((2,1,1))
-    b[0,0,0] = 1.0
-    Psi = [b.copy() for i in range(L)]
-
-    num_sweeps = int(T // dt)
-
-    num_sweeps = num_sweeps if num_sweeps % 2 == 0 else num_sweeps + 1
-    Ss = []
-
-    for i in range(num_sweeps):
-        print(i)
-        for bond in range(L - 1):
-            try:
-                theta = np.tensordot(Psi[bond], Psi[bond+1], [2,1]).transpose([1,0,2,3])
-            except: 
-                breakpoint()
-            theta = np.tensordot(U[bond], theta, [[2,3],[1,2]]).transpose([2,0,1,3])
-            chiL, d1, d2, chiR = theta.shape
-
-            theta = theta.reshape(chiL*d1, chiR*d2)
-            u,s,v = np.linalg.svd(theta)
-            u = u.reshape(chiL, d1, u.shape[-1]).transpose([1,0,2])
-            v = (np.diag(s) @ v).reshape(s.shape[0], d2, chiR).transpose([1,0,2])
-            
-            if i == num_sweeps - 1:
-                Ss.append(s)
-            Psi[bond] = u
-            Psi[bond+1] = v
-        breakpoint()
-        Psi = [psi.transpose([0,2,1]) for psi in Psi[::-1]]
-        U = [u.transpose([1,0,3,2]) for u in U[::-1]]
-    return(Psi, Ss)
-            
 
 def random_mps_uniform(L, chi=50, d=2, seed=12345):
     """ Generates a random MPS with a fixed bond dimension """
@@ -90,8 +43,6 @@ def random_mps_nonuniform(L, chi_min=50, chi_max=200, d=2, seed=12345):
     mps[0] /= norm
     return(mps)
 
-
-
 def random_mps(L, num_layers=10, d=2, seed=None):
     """ Returns a random MPS by starting with a product state and applying a 
     series of two-site unitary gates. This isn't trotterizes, just one after
@@ -109,11 +60,6 @@ def random_mps(L, num_layers=10, d=2, seed=None):
     if seed:
         np.random.seed(seed)
     Psi = []
-    #for i in range(L):
-    #    b = 0.5 - np.random.rand(d, 1, 1)
-    #    b /= np.linalg.norm(b)
-    #    Psi.append(b)
-
     for i in range(L):
         b = np.zeros((d, 1, 1))
         b[np.random.choice(range(d)), 0, 0] = 1.0
@@ -129,11 +75,37 @@ def random_mps(L, num_layers=10, d=2, seed=None):
             chiL, d1, d2, chiR = theta.shape
             theta = theta.reshape((chiL * d1, d2 * chiR))
             q, r = np.linalg.qr(theta)
-            Psi[i] = q.reshape((d1, chiL, -1))
+            Psi[i] = q.reshape((chiL, d1, -1)).transpose([1,0,2])
             Psi[i+1] = r.reshape((-1,d2,chiR,)).transpose([1,0,2])
         Psi = [psi.transpose([0,2,1]) for psi in Psi[::-1]]
         num_sweeps += 1
     return(mps_2form(Psi, 'B'))
+
+def random_mps_N_unitaries(L, num_unitaries):
+    """
+    Starting from a product state, applies N two site unitaries
+    """
+
+    Psi = []
+    d = 2
+    for i in range(L):
+        b = np.zeros((d, 1, 1))
+        b[np.random.choice(range(d)), 0, 0] = 1.0
+        Psi.append(b)
+    for i in range(num_unitaries):
+        j = i % (L - 1)
+        print(f"applying unitary to site {j}, {j+1}")
+        U = unitary_group.rvs(4).reshape([2,2,2,2])
+        theta = np.tensordot(Psi[j], Psi[j+1], [2,1])
+        theta = np.tensordot(U, theta, [[2,3],[0,2]]).transpose([2,0,1,3])
+
+        chiL, d1, d2, chiR = theta.shape
+        theta = theta.reshape((chiL*d1, chiR*d2))
+        q, r = np.linalg.qr(theta)
+        Psi[j] = q.reshape((chiL,d1,-1)).transpose([1,0,2])
+        Psi[j+1] = r.reshape((-1,d2,chiR)).transpose([1,0,2])
+    return(mps_2form(Psi, 'B'))
+
 
 def mpo_on_mps(mpo, mps):
     """ Applies an MPO to an MPS. In this case, as we've structured it A is
@@ -230,13 +202,6 @@ def contract_all_mpos(mpos):
         gc.collect()
     return(out)
 
-def shift_leg(X, Y, leg, bond_dim):
-    """ Given a leg on tensor X, shifts the leg down to tensor Y. Assumes that 
-    X is contracted with Y via leg 2 on X to leg 3 on Y. bond_dim is the 
-    desired bond dimension of the final contraction (may be some truncation)  """
-    ndim = X.ndim
-    X = X.transpose([*range(leg), *range(leg+1,ndim), *leg])
-
 def H_TFI(L, g, J=1):
     """
     1-d Hamiltonian of TFI model.
@@ -265,7 +230,7 @@ def H_TFI(L, g, J=1):
                     gl * np.kron(sx, id)).reshape([d]*4))
     return H
 
-def diagonal_expansion(Psi):
+def diagonal_expansion(Psi, eta=None, debug_mode=False):
     """ This performs an expansion where the tensor network shifts diagonally.
       |  |  |  |  | 
     --A--A--A--A--A--
@@ -285,6 +250,8 @@ def diagonal_expansion(Psi):
     # Check MPO
     if Psi[0].ndim == 3:
         Psi = mps2mpo(Psi)
+    if eta is None:
+        eta = max(sum([i.shape for i in Psi], ()))
     d = Psi[0].shape[0]
     # Grouping first and second tensor
     pW1, pE1, chiS1, chiN1 = Psi[0].shape
@@ -296,7 +263,12 @@ def diagonal_expansion(Psi):
     psi = psi.reshape([pW1*pW2, pE1*pE2, chiS1, chiN2])
     Psi[1] = psi
     Psi.pop(0)
-    A0, Lambda = moses_move_simple(Psi)
+
+    truncation_par = {"bond_dimensions": dict(eta_max=eta, chi_max=100), "p_trunc": 0}
+    if eta == 1:
+        A0, Lambda = moses_move_simple(Psi, truncation_par, debug_mode=True)
+    else:
+        A0, Lambda = moses_move_simple(Psi, truncation_par, debug_mode=False)
     # Splitting physical leg out of first tensor
     psi = A0[0]
     pL, pR, chiS, chiN = psi.shape
@@ -312,9 +284,10 @@ def diagonal_expansion(Psi):
     # Splitting last tensor of A0
     psi = A0[-1]
     pL, pR, chiS, chiN = psi.shape
-    assert pR == 4
+    # assert pR == 4
     assert chiN == 1
-    psi = psi.reshape(pL, d, d, chiS, chiN).transpose([0,1,3,4,2]).reshape(pL,d,chiS,d)
+    if pR == 4:
+        psi = psi.reshape(pL, d, d, chiS, chiN).transpose([0,1,3,4,2]).reshape(pL,d,chiS,d)
     A0[-1] = psi
 
     # send second physical leg to the top
@@ -323,7 +296,9 @@ def diagonal_expansion(Psi):
     psi = Lambda[-1]
     pL, pR, chiS, chiN = Lambda[-1].shape
     assert(pR == chiN == 1)
-    assert pL == 4
+    #assert pL == 4
+    if pL != 4:
+        psi = pad(psi, 0, 4)
     psi = psi.reshape(d,d,pR,chiS,chiN).transpose([0,2,3,1,4])
     psi = psi.reshape(d*pR*chiS,d)
     q, r = np.linalg.qr(psi)
@@ -338,15 +313,65 @@ def contract_diagonal_expansion(A0, Lambda):
     """ Contraction is not just mpo on mpo, because of the overhand on each
     side."""
     out = A0.copy()
+    Lambda = Lambda.copy()
     for i in range(1, len(A0)):
         prod = np.tensordot(A0[i], Lambda[i-1], [1,0])
         prod = group_legs(prod, [[0],[3],[1,4],[2,5]])[0]
         out[i] = prod
+
     last_tensor = np.tensordot(A0[-1], Lambda[-2], [1,0])
     last_tensor = np.tensordot(last_tensor, Lambda[-1], [[2,5],[0,2]])
     last_tensor = group_legs(last_tensor, [[0],[2,4],[1,3],[5]])[0]
     out[-1] = last_tensor
     return(out)
+
+def contract_series_diagonal_expansions(As, Lambda, n=None):
+    """ Contracts a list of As and a final Lambda wavefunction. n is the number
+    of layers to contract."""
+
+    if n is None:
+        n = len(As)
+    contracted = Lambda.copy()
+    for i in range(-1, -(n + 1), -1):
+        contracted = contract_diagonal_expansion(As[i], contracted)
+    return contracted
+
+def multiple_diagonal_expansions(Psi, n):
+    """ Perform n diagonal expansions. Returns all the Ai and Lambda such that
+    \prod A_0 A_1...A_{n-1} Lambda = Psi 
+    """
+    fidelity = [mps_overlap(Psi, Psi)]
+    As, Lambdas = [], []
+    Ss = [entanglement_entropy(Psi)]
+    Lambda = Psi.copy()
+    change_points = []
+
+    # Unpack all shapes of tensors in Psi and select largest bond dimension 
+    eta_max = max(list(sum([i.shape for i in Lambda], ())))
+    count_no_change = 0
+
+    for i in range(n):
+        A0, Lambda = diagonal_expansion(Lambda, eta_max, debug_mode=False)
+
+        As.append(A0)
+        Lambdas.append(Lambda)
+        Lambda = mps_2form(Lambda, 'B')
+        Ss.append(entanglement_entropy(Lambda))
+
+        fidelity.append(np.linalg.norm(mps_overlap(Psi, Lambda)))
+        if eta_max == 1:
+            return As, Lambda, Ss, fidelity, change_points, Lambdas
+
+        if Ss[-2] - Ss[-1] < 1.e-16:
+            count_no_change += 1
+            #eta_max = int(eta_max / 2)
+            #change_points.append(i)
+            #print(f"Changing eta to {eta_max}")
+            if count_no_change == 10:
+                return As, Lambda, Ss, fidelity, change_points, Lambdas
+
+    return As, Lambda, Ss, fidelity, change_points, Lambdas
+
 
 if __name__ == '__main__':
 

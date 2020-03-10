@@ -2,6 +2,7 @@ import numpy as np
 from renyin_splitter import split_psi as split_psi
 from splitter import svd_split
 import warnings
+from state_approximation import pad
 
 ### Convention for MPS to be split: Psi = [B0, B1, ...]
 #      3
@@ -75,7 +76,7 @@ import warnings
 #             \
 #         0->----<- 2
 #
-def moses_move(Psi, truncation_par=None):
+def moses_move(Psi, truncation_par=None, debug_mode=False):
     """ Splits a 2-sided MPS Psi = [b0, b1, ...]  using a simple moses approach 
     according to
 		
@@ -167,7 +168,8 @@ def moses_move(Psi, truncation_par=None):
                                       'p_trunc': truncation_par['p_trunc']
                                   },
                                   verbose=0,
-                                  pref=pref)
+                                  pref=pref,
+                                  debug_mode=debug_mode)
 
             dL, dR = a.shape[1], a.shape[2]
 
@@ -194,9 +196,11 @@ def moses_move(Psi, truncation_par=None):
             a, B = np.linalg.qr(Tri.reshape(d, mL*mR))
             a = a.reshape(chiV, pL, 1, a.shape[-1]).transpose([1,3,0,2])
             B = B.reshape((B.shape[0], mL, pR, eta)).transpose([0,2,3,1])
+            if a.shape[1] == 1:
+                a = pad(a, 1, 2)
+                B = pad(B, 0, 2)
             A.append(a)
             Lambda.append(B)
-            C = _evaluate(a, B)
     return(A, Lambda)
 
 def _evaluate(A, B):

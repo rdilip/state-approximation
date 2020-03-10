@@ -1,5 +1,6 @@
 from matplotlib import pyplot as plt
 import numpy as np
+from rfunc import pad
 import scipy as sp
 from disentanglers import disentangle_S2, disentangle_brute
 from misc import svd, svd_theta_UsV, group_legs, ungroup_legs
@@ -27,7 +28,8 @@ def split_psi(Psi,
               max_iter=120,
               init_from_polar=True,
               pref='dL',
-              disentangler=disentangle_S2):
+              disentangler=disentangle_S2,
+              debug_mode=False):
     """ Given a tripartite state psi.shape = d x mL x mR, find an
     approximation
 	
@@ -80,10 +82,11 @@ def split_psi(Psi,
         dL, dR = min(dL1, dR1), max(dL1, dR1)
     else:
         raise ValueError
-
+ 
 
     X, y, Z = svd(Psi.reshape(-1, mL*mR), full_matrices=False)
     D2 = len(y)
+
     
     A = X
     theta = (Z.T * y).T
@@ -117,15 +120,16 @@ def split_psi(Psi,
 
 
     # Disentangle the two-site wavefunction
+
     theta = np.reshape(theta, (dL, dR, mL, mR))  #view TEBD style
     theta = np.transpose(theta, (2, 0, 1, 3))
 
     s = np.linalg.svd(theta, compute_uv=False)
     sb = -np.log(np.sum(s[np.abs(s) > 1.e-10]**2))
-    #theta, U, info = disentangle_S2(theta,
-    #                              eps=10 * eps,
-    #                              max_iter=max_iter)
-    theta, U = disentangle_brute(theta)
+    theta, U, info = disentangle_S2(theta,
+                                  eps=10 * eps,
+                                  max_iter=max_iter)
+    #theta, U = disentangle_brute(theta)
     s = np.linalg.svd(theta, compute_uv=False)
     s = s[np.abs(s) > 1.e-10]
     A = np.tensordot(A,
@@ -135,16 +139,21 @@ def split_psi(Psi,
     theta = np.transpose(theta, [1, 0, 2, 3])
     theta = np.reshape(theta, (dL * mL, dR * mR))
 
-    X, s, Z = svd(theta, full_matrices=False)
+    #X, s, Z = svd(theta, full_matrices=False)
+    X, s, Z, chi_c, trunc_bond = svd_theta_UsV(theta, truncation_par['chi_max'],p_trunc=0.0)
     chi_c = len(s)
 
     S = np.reshape(X, (dL, mL, chi_c))
     S = S * s
 
+    
     B = np.reshape(Z, (chi_c, dR, mR))
     B = np.transpose(B, (1, 0, 2))
 
-    #TODO: technically theses errors are only good to lowest order I think
+    if dR == 1:
+        A = pad(A, 2, 2)
+        B = pad(B, 0, 2)
+
     return A, S, B
 
 def cleanup(a, S, factor):

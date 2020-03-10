@@ -12,6 +12,9 @@ complex isn't working super well).
 Two parameter modes: cart represents cartesian input vectors, sph represents
 spherical input vectors. cart means you have to do a constrained optimization.
 
+For an n by n matrix, you need n-1 vectors a^{(j)} with length 1, 2,..., n-1
+and n-1 angles theta.
+
 """
 # TODO Still some problems with complex numbers -- only use real for now.
 # At some point need to add alpha and beta vectors, but no real purpose until
@@ -40,6 +43,7 @@ def construct_A(a, theta, n):
 
 def construct_V(params, n, mode='sph'):
     assert mode in ['cart', 'sph']
+    assert np.isclose(len(params), (n - 1) + (n - 2)*(n-1) / 2 + (mode == 'cart'))
     As, thetas = process_parameters(params, n, mode=mode)
     return(_construct_V(As, thetas))
 
@@ -69,7 +73,6 @@ def process_parameters(params, n, mode='sph'):
         split = np.split(params, split_indices)
         phis, thetas = split[:-1], split[-1]
         As = hyperspherical_to_cartesian(phis)
-        breakpoint()
     else:
         split_indices = np.cumsum(np.arange(n-1) + 1)
         split = np.split(params, split_indices)
@@ -109,9 +112,3 @@ def _construct_V(As, thetas):
     for i, a in enumerate(As[::-1]):
         V = V @ construct_A(a, thetas[i], n)
     return(V)
-
-def number_of_vectors(n):
-    """ Returns the number of angles you need for an n by n matrix. Remember that
-    phis is 1 less than that. """
-    return(n-1, n)
-   
