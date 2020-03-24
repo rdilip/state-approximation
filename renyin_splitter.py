@@ -125,6 +125,9 @@ def split_psi(Psi,
 
     s = np.linalg.svd(theta, compute_uv=False)
     sb = -np.log(np.sum(s[np.abs(s) > 1.e-10]**2))
+
+    chiL, d1, d2, chiR = theta.shape
+    U = np.eye(d1*d2).reshape(d1,d2,d1,d2)
     if disentangler == disentangle_S2:
         theta, U = disentangle_S2(theta,
                                       eps=10 * eps,

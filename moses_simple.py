@@ -2,7 +2,7 @@ import numpy as np
 from renyin_splitter import split_psi as split_psi
 import warnings
 from disentanglers import disentangle_brute, disentangle_S2
-from state_approximation import pad
+from rfunc import pad
 
 ### Convention for MPS to be split: Psi = [B0, B1, ...]
 #      3

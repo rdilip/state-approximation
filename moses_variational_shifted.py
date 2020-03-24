@@ -79,6 +79,7 @@ def var_1site_Lambda(Psi, A, Lambda):
     X, S, Z = np.linalg.svd(Lp.reshape(pE*chiS*pW, chiN), full_matrices=False)
     Lambdap[L-1] = X.reshape(pW, pE, chiS, -1)
     return Lambdap, Lp_list
+
 def var_A(Psi, A, Lambda, Lp_list=None):   
     """ Variationally sweeps through A and optimizes tensors to maximize overlap between 
     Psi and A.Lambda. Assumes the shifted protocol. 

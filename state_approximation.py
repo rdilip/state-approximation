@@ -1,3 +1,8 @@
+"""
+Module that variationally decomposes an MPS into a series of quantum gates
+and a low-entanglement MPS
+"""
+
 from renyin_splitter import split_psi 
 from rfunc import pad, pad_mps
 from misc import group_legs, ungroup_legs, mps_2form, mps_overlap, mpo_on_mpo,\
@@ -11,6 +16,7 @@ from moses_simple import moses_move as moses_move_simple
 from moses_variational import moses_move as moses_move_variational
 from moses_variational_shifted import moses_move as moses_move_shifted
 from disentanglers import disentangle_S2, disentangle_brute
+from tebd import tebd
 
 
 def mps2mpo(mps):
@@ -267,7 +273,7 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2):
 
     # Variational moses move
 
-    A0, Lambda = moses_move_shifted(Psi_copy, A=A0, Lambda=Lambda)
+    #A0, Lambda = moses_move_shifted(Psi_copy, A=A0, Lambda=Lambda)
     return A0, Lambda
 
 def contract_diagonal_expansion(A0, Lambda):
@@ -335,7 +341,7 @@ def multiple_diagonal_expansions(Psi, n):
         Number of contractions. No reason to do more than log_2 chi_max
     """
     As, Lambdas = [], []
-    Ss = [entanglement_entropy(Psi)]
+    #Ss = [entanglement_entropy(Psi)]
     Lambda = Psi.copy()
     info = dict(Ss=[], Lambdas=[])
     eta_max = max(sum([i.shape for i in Psi], ()))
@@ -349,7 +355,7 @@ def multiple_diagonal_expansions(Psi, n):
                         
         As.append(A0)
         Lambda = mps_2form(Lambda, 'B')
-        info['Ss'].append(entanglement_entropy(Lambda))
+        #info['Ss'].append(entanglement_entropy(Lambda))
         print(len(Lambda))
         info['Lambdas'].append(Lambda)
 
@@ -363,6 +369,18 @@ if __name__ == '__main__':
     As, Lambda, info = multiple_diagonal_expansions(Psi,10)
     out = contract_series_diagonal_expansions(As, Lambda)
     
-    plt.semilogy(info['Ss']) 
-    plt.show()
+
+    # No halving, no variational
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(10,4))
+    ax.semilogy(info['Ss'], 'o-')
+    ax.set_ylabel("Entanglement entropy", fontsize=14)
+    ax.set_xlabel("Number of iterations", fontsize=14)
+
+    plt.yticks(fontsize=12)
+    plt.xticks(fontsize=12)
+    ax.set_title("Variational " + rf"$\langle\Psi|\tilde\Psi\rangle = {round(mps_overlap(out, Psi),5)}$", fontsize=16)
+    plt.tight_layout()
+
+    plt.savefig("img/nv_vs_v_mm.png", bbox_inches='tight', dpi=150)
+
 
