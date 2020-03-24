@@ -38,54 +38,13 @@ import scipy as sp
 def get_N(Nmax = 1): return(np.diag(np.arange(Nmax + 1)))
 
 def pad(T, axis, num):
-    """ Given a tensor T with a shape (s1, s2,..., s_{axis},.. sn), pads 
-    with 0s until the new shape is (s1, s2,... s_{axis-1},... num,... sn)
+    """ Given a tensor T with a shape (s1, s2,... sn), pads axis with 0s until
+    the new shape is (s1, s2,... num,... sn)
     """
     shape = list(T.shape)
-    if axis < 0:
-        axis = len(shape) + axis
     npad = [(0,0) if i != axis else (0,num-shape[axis]) for i in range(T.ndim)]
     newT = np.pad(T, pad_width=npad, mode='constant', constant_values=0)
     return(newT)
-
-def pad_mps(mps, chi_max):
-    new_mps = mps.copy()
-    L = len(mps)
-    if mps[0].shape[-1] < chi_max:
-        new_mps[0] = pad(mps[0], -1, chi_max)
-    for i in range(1, L-1):
-        for axis in [-1, -2]:
-            if mps[i].shape[axis] < chi_max:
-                new_mps[i] = pad(mps[i], axis, chi_max)
-    if mps[-1].shape[-2] < chi_max:
-        new_mps[-1] = pad(mps[-1], -2, chi_max)
-    return new_mps
-
-def check_isometry(Psi, i):
-    """
-    Checks that the wavefunction Psi is in canonical form with 
-    orthogonality center at index i
-    """
-    if Psi[i].ndim != 4:
-        Psi = mps2mpo(Psi)
-    for j in range(i):
-        psi = Psi[j]
-        pL, pR, chiS, chiN = psi.shape
-        iso = np.tensordot(psi, psi.conj(), [[0,2],[0,2]])
-        iso = iso.reshape([pR*chiN, pR*chiN])
-
-        if not np.allclose(iso, np.eye(pR*chiN), rtol=1.e-8):
-            return False
-
-    for j in range(i+1, len(Psi)):
-        psi = Psi[j]
-        pL, pR, chiS, chiN = psi.shape
-        iso = np.tensordot(psi, psi.conj(), [[0,1,3],[0,1,3]])
-        if not np.allclose(iso, np.eye(chiS), rtol=1.e-8):
-            return False
-    return True
-
-
 
 def strip(fname):
     if fname[-1] == '/':
@@ -199,6 +158,18 @@ def local_state_from_fill(fill, nmax = 1):
     p = np.sqrt(fill / i)
     state = [np.sqrt(1 - p*p)] + [0] * (i-1) + [p] + [0]*(nmax - i)
     return(state)
+
+def entanglement_entropy(Psi, bond=None):
+    """ Returns the entanglement entropy given a wavefunction Psi. 
+    Parameters
+    ----------
+    Psi : list of np.Array
+        Each element of Psi is a 5 index tensor. First index is physical. 
+    bond : int
+        Entanglement entropy across bond. By default, is int(L//2) + 1
+    """
+    if bond is None:
+        bond = int(L//2) + 1
 
 def svd(theta, compute_uv=True, full_matrices=True):
     """ SVD with gesvd backup """

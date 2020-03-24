@@ -1,5 +1,5 @@
 from renyin_splitter import split_psi 
-from rfunc import pad, pad_mps
+from rfunc import pad
 from misc import group_legs, ungroup_legs, mps_2form, mps_overlap, mpo_on_mpo,\
      mps_entanglement_spectrum
 import numpy as np
@@ -8,9 +8,7 @@ from scipy.linalg import expm
 import matplotlib.pyplot as plt
 from scipy.stats import unitary_group
 from moses_simple import moses_move as moses_move_simple
-from moses_variational import moses_move as moses_move_variational
-from moses_variational_shifted import moses_move as moses_move_shifted
-from disentanglers import disentangle_S2, disentangle_brute
+import gc
 
 def random_mps_uniform(L, chi=50, d=2, seed=12345):
     """ Generates a random MPS with a fixed bond dimension """
@@ -96,7 +94,7 @@ def random_mps_N_unitaries(L, num_unitaries):
         Psi.append(b)
     for i in range(num_unitaries):
         j = i % (L - 1)
-        #print(f"applying unitary to site {0}, {1}".format(j, j+1))
+        print(f"applying unitary to site {j}, {j+1}")
         U = unitary_group.rvs(4).reshape([2,2,2,2])
         theta = np.tensordot(Psi[j], Psi[j+1], [2,1])
         theta = np.tensordot(U, theta, [[2,3],[0,2]]).transpose([2,0,1,3])
@@ -201,6 +199,7 @@ def contract_all_mpos(mpos):
     out = mpos[0]
     for mpo in mpos[1:]:
         out = mpo_on_mpo(out, mpo)
+        gc.collect()
     return(out)
 
 def H_TFI(L, g, J=1):
@@ -231,7 +230,7 @@ def H_TFI(L, g, J=1):
                     gl * np.kron(sx, id)).reshape([d]*4))
     return H
 
-def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2):
+def diagonal_expansion(Psi, eta, debug_mode=False):
     """ This performs an expansion where the tensor network shifts diagonally.
       |  |  |  |  | 
     --A--A--A--A--A--
@@ -251,12 +250,8 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2):
     # Check MPO
     if Psi[0].ndim == 3:
         Psi = mps2mpo(Psi)
-    if eta is None:
-        eta = max(sum([i.shape for i in Psi], ()))
     d = Psi[0].shape[0]
     # Grouping first and second tensor
-    Psi = Psi.copy()
-    Psi_copy = Psi.copy() # we do horrible things to Psi
     pW1, pE1, chiS1, chiN1 = Psi[0].shape
     pW2, pE2, chiS2, chiN2 = Psi[1].shape
     assert chiS2 == chiN1
@@ -267,15 +262,11 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2):
     Psi[1] = psi
     Psi.pop(0)
 
-    #if eta < 4:
-    #    #Psi = pad_mps(Psi, 4)
-    #    #eta_max = 4
-    #else:
-    #    eta_max = eta
-
     truncation_par = {"bond_dimensions": dict(eta_max=eta, chi_max=100), "p_trunc": 0}
-    A0, Lambda = moses_move_simple(Psi, truncation_par, disentangler)
-    #A0, Lambda, err = moses_move_variational(Psi, truncation_par=None, A=A0, Lambda=Lambda, N=20)
+    if eta == 1:
+        A0, Lambda = moses_move_simple(Psi, truncation_par, debug_mode=True)
+    else:
+        A0, Lambda = moses_move_simple(Psi, truncation_par, debug_mode=False)
     # Splitting physical leg out of first tensor
     psi = A0[0]
     pL, pR, chiS, chiN = psi.shape
@@ -306,57 +297,26 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2):
     #assert pL == 4
     if pL != 4:
         psi = pad(psi, 0, 4)
-
-    d1 = d2 = d
-    psi = psi.reshape(d1,d2,pR,chiS,chiN).transpose([0,2,3,1,4])
+    psi = psi.reshape(d,d,pR,chiS,chiN).transpose([0,2,3,1,4])
     psi = psi.reshape(d*pR*chiS,d)
-    theta = psi.reshape(pR*chiS,d,d,1)
-
-     
-    Utheta, U = disentangler(theta)
-    try:
-        # bond dimension too low...pad?
-        if A0[-1].shape[3] != 2:
-            A0[-1] = pad(A0[-1], 3, 2)
-        A0[-1] = np.tensordot(A0[-1], U, [[1,3],[2,3]]).transpose([0,2,1,3])
-    except:
-        print(A0[-1].shape, U.shape)
-        sys.exit(0)
-
-    # NOTE: I think there may be a bug somewhere here, that we're only
-    # getting away with because everything is bond dimension 2... no evidence
-    # to suggest this but just have a feeling.
-
-    psi = psi.reshape(d,pR,chiS,d,1,1)
-    psi = np.tensordot(psi, U.conj(), [[0,3],[2,3]]).transpose([4,0,1,5,2,3])
-    pL1, pR1, chiS, pL2, pR2, chiN = psi.shape
-    psi = psi.reshape(pL1*pR1*chiS, pL2*pR2*chiN)
-   
     q, r = np.linalg.qr(psi)
-    q = q.reshape(pL1, pR1, chiS, -1)
-    r = r.reshape(-1, pL2, pR2, chiN).transpose([1,2,0,3])
+    q = q.reshape(d,pR,chiS,-1)
+    r = r.reshape(-1,d,1,1).transpose([1,2,0,3])
     Lambda[-1] = q
-
     Lambda.append(r)
 
-    # Variational moses move
-
-    A0, Lambda = moses_move_shifted(Psi_copy, A=A0, Lambda=Lambda)
-    return A0, Lambda
+    return(A0, Lambda)
 
 def contract_diagonal_expansion(A0, Lambda):
     """ Contraction is not just mpo on mpo, because of the overhand on each
     side."""
     out = A0.copy()
-    Lambda = Lambda.copy()
-    for i in range(1, len(A0)-1):
+    for i in range(1, len(A0)):
         prod = np.tensordot(A0[i], Lambda[i-1], [1,0])
         prod = group_legs(prod, [[0],[3],[1,4],[2,5]])[0]
         out[i] = prod
-
     last_tensor = np.tensordot(A0[-1], Lambda[-2], [1,0])
     last_tensor = np.tensordot(last_tensor, Lambda[-1], [[2,5],[0,2]])
-
     last_tensor = group_legs(last_tensor, [[0],[2,4],[1,3],[5]])[0]
     out[-1] = last_tensor
     return(out)
@@ -376,31 +336,63 @@ def multiple_diagonal_expansions(Psi, n):
     """ Perform n diagonal expansions. Returns all the Ai and Lambda such that
     \prod A_0 A_1...A_{n-1} Lambda = Psi 
     """
+    fidelity = [mps_overlap(Psi, Psi)]
     As, Lambdas = [], []
     Ss = [entanglement_entropy(Psi)]
+    Ss_2 = [mps_entanglement_spectrum(Psi)[len(Psi)//2]]
     Lambda = Psi.copy()
-    info = dict(Ss=[], Lambdas=[])
-    eta_max = max(sum([i.shape for i in Psi], ()))
     change_points = []
 
-    count_no_change = 0
+    # Unpack all shapes of tensors in Psi and select largest bond dimension 
+    eta_max = max(list(sum([i.shape for i in Lambda], ())))
 
     for i in range(n):
-        if eta_max == 0:
-            return As, Lambda, info
-        A0, Lambda = diagonal_expansion(Lambda.copy(), eta=eta_max)
-                        
-        As.append(A0)
-        Lambda = mps_2form(Lambda, 'B')
-        info['Ss'].append(entanglement_entropy(Lambda))
-        print(len(Lambda))
-        info['Lambdas'].append(Lambda)
+        if i == 48:
+            A0, Lambda = diagonal_expansion(Lambda, eta_max, debug_mode=True)
+        else:
+            A0, Lambda = diagonal_expansion(Lambda, eta_max, debug_mode=False)
 
-        #if eta_max == 4:
-        #    continue
-        eta_max = int(eta_max / 2)
-    info['change_points'] = change_points
-    return As, Lambda, info
+        As.append(A0)
+        Lambdas.append(Lambda)
+        Lambda = mps_2form(Lambda, 'B')
+        Ss.append(entanglement_entropy(Lambda))
+
+        fidelity.append(np.linalg.norm(mps_overlap(Psi, Lambda)))
+        if eta_max == 1:
+            return As, Lambda, Ss, Ss_2, fidelity, change_points, Lambdas
+
+        if Ss[-2] - Ss[-1] < 1.e-8:
+            #eta_max = int(eta_max / 2)
+            #change_points.append(i)
+            #print(f"Changing eta to {eta_max}")
+            return As, Lambda, Ss, Ss_2, fidelity, change_points, Lambdas
+
+    return As, Lambda, Ss, Ss_2, fidelity, change_points, Lambdas
+
+
+def check_isometry(Psi, i):
+    """
+    Checks that the wavefunction Psi is in canonical form with 
+    orthogonality center at index i
+    """
+    if Psi[i].ndim != 4:
+        Psi = mps2mpo(Psi)
+    for j in range(i):
+        psi = Psi[j]
+        pL, pR, chiS, chiN = psi.shape
+        iso = np.tensordot(psi, psi.conj(), [[0,2],[0,2]])
+        iso = iso.reshape([pR*chiN, pR*chiN])
+
+        if not np.allclose(iso, np.eye(pR*chiN), rtol=1.e-8):
+            return False
+
+    for j in range(i+1, len(Psi)):
+        psi = Psi[j]
+        pL, pR, chiS, chiN = psi.shape
+        iso = np.tensordot(psi, psi.conj(), [[0,1,3],[0,1,3]])
+        if not np.allclose(iso, np.eye(chiS), rtol=1.e-8):
+            return False
+    return True
 
 if __name__ == '__main__':
 

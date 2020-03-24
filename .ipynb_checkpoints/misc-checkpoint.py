@@ -252,7 +252,21 @@ def mps_entanglement_spectrum(Psi, site_spectrum=None):
     return Ss[::-1]
 
 
-def mpo_on_mpo(X, Y, form=None):
+def mpo_on_mpo(X, Y):
+    if X[0].ndim != 4 or Y[0].ndim != 4:
+        raise ValueError
+    out = []
+    # Sometimes get a memoryerror here...i wonder why
+    for i in range(len(X)):
+        prod_xy = np.tensordot(X[i], Y[i], [1,0])
+        try:
+            prod_xy = group_legs(prod_xy, [[0],[3],[1,4],[2,5]])[0]
+        except MemoryError:
+            breakpoint()
+        out.append(prod_xy)
+    return(out)
+
+def mpo_on_mpo_deprecated(X, Y, form=None):
     """ Multiplies two two-sided MPS, XY = X*Y and optionally puts in a canonical form
 	"""
     if X[0].ndim != 4 or Y[0].ndim != 4:

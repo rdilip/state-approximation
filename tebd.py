@@ -21,19 +21,17 @@ def H_TFI(L, g, J=1.0):
 
 def H_dH(L, dJ):
     """
-    Hamiltonian for the dimerized Heisenberg model, with h=0. I think the
-    Hamiltonian is the same as that of the transverse field ising model, but
-    with the J coupling shifted up or down for odd or even bonds
+    Hamiltonian for the dimerized Heisenberg model, with h=0.
     """
-    bonds = []
-    H_odd = H_TFI(L, g=1.0, J=1.0 + dJ)
-    H_even = H_TFI(L, g=1.0, J=1.0 - dJ)
+    J = 1.0
+    H = []
+    Sp = [[0., 1.],[0., 0.]]
+    Sm = [[0., 0.],[1., 0.]]
+
     for i in range(L-1):
-        if i % 2 == 1:
-            bonds.append(H_odd[i])
-        else:
-            bonds.append(H_even[i])
-    return bonds
+        h = -(J + dJ * (-1.0)**i) * (np.kron(Sp, Sm) + np.kron(Sm, Sp))
+        H.append(h.reshape([2]*4))
+    return H 
 
 def make_U(H_bonds, dt):
     d = 2

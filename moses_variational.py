@@ -326,53 +326,6 @@ def moses_move(
 					the schmidt spectra of Lambda because of errors occured at future steps, but is as errors --> 0.} [TODO]
 	"""
 
-    eta_max = truncation_par['bond_dimensions']['eta_max']
-
-    if A == None or Lambda == None:
-        chi_max = truncation_par['bond_dimensions']['chi_max']
-        A = []
-        L = len(Psi)
-        Lambda = []
-
-        for i in range(L):
-            chi_m = chi_max
-
-            Psi_chi_l, Psi_chi_r, Psi_chi_d, Psi_chi_u = Psi[i].shape
-
-            if i == 0:
-                chi_d = eta_d = 1
-            else:
-                chi_d = chi_u
-                eta_d = eta_max
-
-            if i == L - 1:
-                chi_u = eta_u = 1
-            else:
-                chi_u = chi_max
-                eta_u = eta_max
-
-                d = Psi_chi_l * chi_d
-
-                if d < chi_max * chi_max:
-                    chi_u = np.min([int(np.sqrt(d)), chi_max])
-                    chi_m = np.min([d / chi_u, chi_max])
-
-            #      3                 3         3
-            #      v                 ^         ^
-            #      |                 |         |
-            #  0->- -<-1         0->- ->1  0->- -<-1
-            #      |                 |         |
-            #      v                 ^         ^
-            #      2                 2         2
-
-            A.append((0.5 - np.random.rand(Psi_chi_l, chi_m, chi_d, chi_u)) / 1000.)
-            chi_l_p, chi_r_p = Psi_chi_l, np.min([chi_m, Psi_chi_r])
-            chi_d_p, chi_u_p = np.min([chi_d, Psi_chi_d]), np.min([chi_u, Psi_chi_u])
-            A[-1][:chi_l_p, :chi_r_p, :chi_d_p, :chi_u_p] = Psi[i][:chi_l_p, :chi_r_p, :chi_d_p, :chi_u_p]
-
-            Lambda.append((0.5 - np.random.rand(chi_m, Psi_chi_r, eta_d, eta_u)) / 1000.)
-            X = np.min([chi_l_p, chi_r_p])
-            Lambda[-1][:X, :X, 0, 0] = np.eye(X)
 
     Lp_list = None
     # print("before err", Psi_AL_overlap(Psi, A, Lambda))
@@ -394,6 +347,6 @@ def moses_move(
         else:
             err_prev = err_now
 
-    assert np.isclose(Psi_AL_overlap(Psi, A, Lambda), err_now)
+    #assert np.isclose(Psi_AL_overlap(Psi, A, Lambda), err_now)
 
     return A, Lambda, {'error': Psi_AL_overlap(Psi, A, Lambda)}

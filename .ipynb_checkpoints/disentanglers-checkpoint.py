@@ -7,7 +7,6 @@ style wavefunction theta.
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
-from scipy.stats import unitary_group
 
 def disentangle_S2(theta,eps = 1e-9, max_iter = 200):
     ml,d1,d2,mr=theta.shape
@@ -25,7 +24,7 @@ def disentangle_S2(theta,eps = 1e-9, max_iter = 200):
         if m > 1:
             go = Ss[-2] - Ss[-1] > eps
         m+=1
-    return theta, U.reshape([d1, d2, d1, d2])
+    return theta, U.reshape([d1, d2, d1, d2]), dict(Ss=Ss)
 
 def disentangle_brute(theta):
     mL, d1, d2, mR = theta.shape

@@ -28,7 +28,8 @@ def split_psi(Psi,
               max_iter=120,
               init_from_polar=True,
               pref='dL',
-              disentangler=disentangle_S2):
+              disentangler=disentangle_S2,
+              debug_mode=False):
     """ Given a tripartite state psi.shape = d x mL x mR, find an
     approximation
 	
@@ -125,13 +126,9 @@ def split_psi(Psi,
 
     s = np.linalg.svd(theta, compute_uv=False)
     sb = -np.log(np.sum(s[np.abs(s) > 1.e-10]**2))
-    if disentangler == disentangle_S2:
-        theta, U = disentangle_S2(theta,
-                                      eps=10 * eps,
-                                      max_iter=max_iter)
-    else:
-        theta, U  = disentangler(theta)
-
+    theta, U, info = disentangle_S2(theta,
+                                  eps=10 * eps,
+                                  max_iter=max_iter)
     #theta, U = disentangle_brute(theta)
     s = np.linalg.svd(theta, compute_uv=False)
     s = s[np.abs(s) > 1.e-10]
