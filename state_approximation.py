@@ -349,6 +349,7 @@ def multiple_diagonal_expansions(Psi, n):
     count_no_change = 0
 
     for i in range(n):
+        print(eta_max, i)
         if eta_max == 0:
             return As, Lambda, info
         A0, Lambda = diagonal_expansion(Lambda.copy(), eta=eta_max)
@@ -356,11 +357,21 @@ def multiple_diagonal_expansions(Psi, n):
         As.append(A0)
         Lambda = mps_2form(Lambda, 'B')
         #info['Ss'].append(entanglement_entropy(Lambda))
-        print(len(Lambda))
         info['Lambdas'].append(Lambda)
 
-        eta_max = int(eta_max / 2)
+        if i == 0:
+            eta_max = largest_power_of_two(eta_max)
+        else:
+            eta_max = int(eta_max / 2)
     return As, Lambda, info
+
+def largest_power_of_two(num):
+    """ Returns the largest power of two less than this number """
+    assert num > 1
+    power_of_two = 1.
+    while power_of_two < num:
+        power_of_two *= 2
+    return int(power_of_two / 2.)
 
 if __name__ == '__main__':
     tebd_state, _, _ = tebd(10, 1.5, 0.1)
