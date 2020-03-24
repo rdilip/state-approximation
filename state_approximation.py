@@ -12,137 +12,17 @@ from moses_variational import moses_move as moses_move_variational
 from moses_variational_shifted import moses_move as moses_move_shifted
 from disentanglers import disentangle_S2, disentangle_brute
 
-def random_mps_uniform(L, chi=50, d=2, seed=12345):
-    """ Generates a random MPS with a fixed bond dimension """
-    mps = []
-    np.random.seed(seed)
-    for i in range(L):
-        chiL = chiR = chi
-        if i == 0:
-            chiL = 1
-        if i == L-1:
-            chiR = 1
-        t = 0.5 - np.random.rand(d, chiL, chiR)
-        mps.append(t / np.linalg.norm(t))
-    norm = np.sqrt(mps_overlap(mps, mps))
-    mps[0] /= norm
-    return(mps)
-
-def random_mps_nonuniform(L, chi_min=50, chi_max=200, d=2, seed=12345):
-    """ Generates a random MPS with a random bond dimension """
-    mps = []
-    np.random.seed(seed)
-    for i in range(L):
-        chiR = np.random.randint(chi_min, chi_max)
-        if i == 0:
-            chiL = 1
-        if i == L-1:
-            chiR = 1
-        t = 0.5 - np.random.rand(d, chiL, chiR)
-        mps.append(t / np.linalg.norm(t))
-        chiL = chiR
-    norm = np.sqrt(mps_overlap(mps, mps))
-    mps[0] /= norm
-    return(mps)
-
-def random_mps(L, num_layers=10, d=2, seed=None):
-    """ Returns a random MPS by starting with a product state and applying a 
-    series of two-site unitary gates. This isn't trotterizes, just one after
-    the other.
-    Parameters
-    ----------
-    L : int
-        Length of MPS
-    num_layers : int
-        Number of layers of unitary gates to apply. One layer is a single sweep
-        back and forth.
-    d : int
-        Physical dimension
-    """
-    if seed:
-        np.random.seed(seed)
-    Psi = []
-    for i in range(L):
-        b = np.zeros((d, 1, 1))
-        b[np.random.choice(range(d)), 0, 0] = 1.0
-        Psi.append(b)
-
-    num_sweeps = 0
-    while num_sweeps < 2 * num_layers:
-        psi = Psi[0]
-        for i in range(L-1):
-            U = unitary_group.rvs(d*d).reshape([d,d,d,d])
-            theta = np.tensordot(Psi[i], Psi[i+1], [2,1])
-            theta = np.tensordot(theta, U, [[0,2],[2,3]]).transpose([0,2,3,1])
-            chiL, d1, d2, chiR = theta.shape
-            theta = theta.reshape((chiL * d1, d2 * chiR))
-            q, r = np.linalg.qr(theta)
-            Psi[i] = q.reshape((chiL, d1, -1)).transpose([1,0,2])
-            Psi[i+1] = r.reshape((-1,d2,chiR,)).transpose([1,0,2])
-        Psi = [psi.transpose([0,2,1]) for psi in Psi[::-1]]
-        num_sweeps += 1
-    return(mps_2form(Psi, 'B'))
-
-def random_mps_N_unitaries(L, num_unitaries):
-    """
-    Starting from a product state, applies N two site unitaries
-    """
-
-    Psi = []
-    d = 2
-    for i in range(L):
-        b = np.zeros((d, 1, 1))
-        b[np.random.choice(range(d)), 0, 0] = 1.0
-        Psi.append(b)
-    for i in range(num_unitaries):
-        j = i % (L - 1)
-        #print(f"applying unitary to site {0}, {1}".format(j, j+1))
-        U = unitary_group.rvs(4).reshape([2,2,2,2])
-        theta = np.tensordot(Psi[j], Psi[j+1], [2,1])
-        theta = np.tensordot(U, theta, [[2,3],[0,2]]).transpose([2,0,1,3])
-
-        chiL, d1, d2, chiR = theta.shape
-        theta = theta.reshape((chiL*d1, chiR*d2))
-        q, r = np.linalg.qr(theta)
-        Psi[j] = q.reshape((chiL,d1,-1)).transpose([1,0,2])
-        Psi[j+1] = r.reshape((-1,d2,chiR)).transpose([1,0,2])
-    return(mps_2form(Psi, 'B'))
-
-
-def mpo_on_mps(mpo, mps):
-    """ Applies an MPO to an MPS. In this case, as we've structured it A is
-    actually the MPS and Lambda is the MPO. 
-
-    A convention:
-
-    2
-    |
-    A - 0(p)
-    |
-    1
-
-    Lambda convention:
-         3
-         |
-    2 -- B -- 0(p)
-         |
-         1
-    """
-    assert len(mpo) == len(mps)
-    mps_output = []
-    for i in range(len(mpo)):
-        a = mps[i]
-        B = mpo[i]
-        out = np.tensordot(B, a, [0,0]).transpose([0,1,3,2,4])
-        d0, d1, d2, d3, d4 = out.shape
-        mps_output.append(out.reshape([d0, d1*d2, d3*d4]))
-    return(mps_output)
 
 def mps2mpo(mps):
-    """ Converts an MPS in a reasonable form to an MPO with Mike and Frank's
-    index conventions
+    """ Converts an MPS an MPO with Mike and Frank's index conventions
+    Parameters
+    ----------
+    mps : list of np.Array
+        Should have index format phys, chiL, chiR
+    Returns
+    -------
+    mpo : list of np.Array
     """
-    # TODO insert diagrams into docstring
     mpo = []
     for i, A in enumerate(mps):
         d0, chiL, chiR = A.shape
@@ -150,15 +30,32 @@ def mps2mpo(mps):
     return(mpo)
 
 def mpo2mps(mpo):
-    """ Converts an MPO to an MPS where the second index is assumed to be 
-    trivial """
+    """ Converts an MPO to an MPS.
+    Parameters
+    ----------
+    mpo : list of np.Array
+        Should have index format p_left, p_right (trivial), chiL, chiR
+    Returns
+    -------
+    mps : list of np.Array
+    """
     mps = []
     for i, A in enumerate(mpo):
         d0, _, chiL, chiR = A.shape
         mps.append(A.reshape((d0, chiL, chiR)))
     return(mps)
 
-def contract_ABS(A, B, S):
+def _contract_ABS(A, B, S):
+    """ Contracts a tri-split tensor. 
+    Parameters
+    ----------
+    A, B, S : np.Array
+        Follows conventions defined in renyin_splitter.py
+    Returns
+    -------
+    T : np.Array
+        Contracted tensor.
+    """
     if len(A.shape) == 4:
         C = np.tensordot(A, B, [1,0])
         T = np.tensordot(C, S, [[2,5],[0,2]])
@@ -173,9 +70,14 @@ def entanglement_entropy(Psi_inp):
     """ Brute calculates the von Neumann entropy. Can do more easily by
     taking SVDs, but this is a good sanity check.
     Parameters
+    ----------
     Psi : np.Array
         Tensor representing wavefunction. Can be a matrix product state but
         does not have to be.
+    Returns
+    -------
+    S : np.float
+        entanglement entropy of the state
     """
     if len(Psi_inp[0].shape) == 4:
         Psi = mpo2mps(Psi_inp)
@@ -194,6 +96,7 @@ def entanglement_entropy(Psi_inp):
     return -np.sum(s**2 * np.log(s**2))
 
 def invert_mpo(mpo):
+    """ Inverts an MPO along non physical degrees of freedom """
     return([T.transpose([0,1,3,2]) for T in mpo[::-1]])
 
 def contract_all_mpos(mpos):
@@ -203,11 +106,23 @@ def contract_all_mpos(mpos):
         out = mpo_on_mpo(out, mpo)
     return(out)
 
-def H_TFI(L, g, J=1):
+def H_TFI(L, g, J=1.):
     """
     1-d Hamiltonian of TFI model.
     List of gates for TFI = -g X - J ZZ. Deals with edges to make gX uniform everywhere
 
+    Parameters
+    ----------
+    L : int
+        Length of chain
+    g : float
+        Transverse coupling
+    J : float
+        NN coupling 
+    Returns
+    -------
+    H : list of np.Array
+        List of two site tensors.
     """
     sx = np.array([[0, 1], [1, 0]])
     sz = np.array([[1, 0], [0, -1]])
@@ -247,6 +162,22 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2):
 
     At some point I should adjust these diagrams so they can be mapped onto
     inputs...
+
+    Parameters
+    ----------
+    Psi : list of np.Array
+        Can be either in mpo format with one trivial leg or in mps format.
+    eta : int
+        Maximum bond dimension along Lambda
+    disentangler : fn
+        Disentangler function. Should accept theta (index format chiL, pL, pR,
+        chiR and return U.theta, U.
+    Returns
+    -------
+    A : list of np.Array
+        Left column tensor
+    Lambda : list of np.Array
+        Right column tensor
     """
     # Check MPO
     if Psi[0].ndim == 3:
@@ -275,7 +206,7 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2):
 
     truncation_par = {"bond_dimensions": dict(eta_max=eta, chi_max=100), "p_trunc": 0}
     A0, Lambda = moses_move_simple(Psi, truncation_par, disentangler)
-    #A0, Lambda, err = moses_move_variational(Psi, truncation_par=None, A=A0, Lambda=Lambda, N=20)
+
     # Splitting physical leg out of first tensor
     psi = A0[0]
     pL, pR, chiS, chiN = psi.shape
@@ -314,14 +245,9 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2):
 
      
     Utheta, U = disentangler(theta)
-    try:
-        # bond dimension too low...pad?
-        if A0[-1].shape[3] != 2:
-            A0[-1] = pad(A0[-1], 3, 2)
-        A0[-1] = np.tensordot(A0[-1], U, [[1,3],[2,3]]).transpose([0,2,1,3])
-    except:
-        print(A0[-1].shape, U.shape)
-        sys.exit(0)
+    if A0[-1].shape[3] != 2:
+        A0[-1] = pad(A0[-1], 3, 2)
+    A0[-1] = np.tensordot(A0[-1], U, [[1,3],[2,3]]).transpose([0,2,1,3])
 
     # NOTE: I think there may be a bug somewhere here, that we're only
     # getting away with because everything is bond dimension 2... no evidence
@@ -345,8 +271,18 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2):
     return A0, Lambda
 
 def contract_diagonal_expansion(A0, Lambda):
-    """ Contraction is not just mpo on mpo, because of the overhand on each
-    side."""
+    """ Contracts A0 and Lambda with Lambda shifted one tensor upwards.
+    Parameters
+    ----------
+    A0 : list of np.Array
+        Left column mpo
+    Lambda : list of np.Array
+        Right column wavefunction
+    Returns
+    -------
+    contracted : list of np.Array
+        A0.Lambda
+    """
     out = A0.copy()
     Lambda = Lambda.copy()
     for i in range(1, len(A0)-1):
@@ -362,8 +298,21 @@ def contract_diagonal_expansion(A0, Lambda):
     return(out)
 
 def contract_series_diagonal_expansions(As, Lambda, n=None):
-    """ Contracts a list of As and a final Lambda wavefunction. n is the number
-    of layers to contract."""
+    """ Contracts a list of As and a final Lambda wavefunction.
+    Parameters
+    ----------
+    As : list of lists of np.Arrays
+        List of single column wavefunctions shifted relative to each other,
+        contracted from left to right 
+    Lambda : list of np.Array
+        Final physical wavefunction
+    n : int
+        Number of layers to contract (obviously < len(As))
+    Returns
+    -------
+    contracted : list of np.Array
+        Full contracted mps.
+    """
 
     if n is None:
         n = len(As)
@@ -374,14 +323,22 @@ def contract_series_diagonal_expansions(As, Lambda, n=None):
 
 def multiple_diagonal_expansions(Psi, n):
     """ Perform n diagonal expansions. Returns all the Ai and Lambda such that
-    \prod A_0 A_1...A_{n-1} Lambda = Psi 
+    \prod A_0 A_1...A_{n-1} Lambda ~= Psi
+
+    By default will halve max bond dimension of Lambda at each step
+
+    Parameters
+    ----------
+    Psi : list of np.Array
+        Wavefunction to expand
+    n : int
+        Number of contractions. No reason to do more than log_2 chi_max
     """
     As, Lambdas = [], []
     Ss = [entanglement_entropy(Psi)]
     Lambda = Psi.copy()
     info = dict(Ss=[], Lambdas=[])
     eta_max = max(sum([i.shape for i in Psi], ()))
-    change_points = []
 
     count_no_change = 0
 
@@ -396,32 +353,16 @@ def multiple_diagonal_expansions(Psi, n):
         print(len(Lambda))
         info['Lambdas'].append(Lambda)
 
-        #if eta_max == 4:
-        #    continue
         eta_max = int(eta_max / 2)
-    info['change_points'] = change_points
     return As, Lambda, info
 
 if __name__ == '__main__':
-
-    Psi = random_mps_2(8, chi=200, d=2, seed=12345)
-    As = []
-    Ss = []
-    Lambda = mps2mpo(Psi)
-    eps = 1.e-10
-    m = 0
-
-    while m < 100:
-        if m % 2 == 1:
-            Lambda = invert_mpo(Lambda)
-        A0, Lambda = moses_move_simple(Lambda)
-        if m % 2 == 1:
-            Lambda = invert_mpo(Lambda)
-            A0 = invert_mpo(A0)
-        As.append(A0)
-        Ss.append(entanglement_entropy(Lambda))
-        m += 1
-
-    plt.semilogy(Ss) 
+    tebd_state, _, _ = tebd(10, 1.5, 0.1)
+    Psi = mps2mpo(tebd_state.copy())
+    Lambda = Psi.copy()
+    As, Lambda, info = multiple_diagonal_expansions(Psi,10)
+    out = contract_series_diagonal_expansions(As, Lambda)
+    
+    plt.semilogy(info['Ss']) 
     plt.show()
 

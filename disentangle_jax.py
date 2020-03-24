@@ -19,12 +19,16 @@ import numpy as onp
 import jax.numpy as np
 import scipy
 from scipy.optimize import minimize
+import warnings
 
 # PARAMETRIZATIONS
 # It might be that certain parametrizations explore the unitary space in a
 # way more conducive towards finding minima. Worth checking at some point.
 # When you do, make the minimization functions parametrization agnostic (i.e.,
 # just pass a parametrization function)
+
+warnings.warn("This library is not working at the moment. Proceed with caution")
+
 def cayley_transform(v, n):
     """ Returns a unitary via a Cayley parametrization
     Parameters

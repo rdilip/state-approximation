@@ -1,2 +1,0 @@
-
-state_approximation_run00/: U=40.0, t=1.0, nmax=2, Ly=8, Lx=2, phi=[1 8]

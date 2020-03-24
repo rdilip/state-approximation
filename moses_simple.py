@@ -1,6 +1,5 @@
 import numpy as np
 from renyin_splitter import split_psi as split_psi
-from splitter import svd_split
 import warnings
 from disentanglers import disentangle_brute, disentangle_S2
 from state_approximation import pad
