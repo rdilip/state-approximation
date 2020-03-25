@@ -7,8 +7,10 @@ from renyin_splitter import split_psi
 from rfunc import pad, pad_mps
 from misc import group_legs, ungroup_legs, mps_2form, mps_overlap, mpo_on_mpo,\
      mps_entanglement_spectrum
+import pickle
 import numpy as np
 import scipy
+import glob
 from scipy.linalg import expm
 import matplotlib.pyplot as plt
 from scipy.stats import unitary_group
@@ -73,8 +75,9 @@ def _contract_ABS(A, B, S):
     return(T)
 
 def entanglement_entropy(Psi_inp):
-    """ Brute calculates the von Neumann entropy. Can do more easily by
-    taking SVDs, but this is a good sanity check.
+    """ 
+    Calculates the entanglement entropy (no longer brute force method because
+    did you know computers have finite memory?)
     Parameters
     ----------
     Psi : np.Array
@@ -89,17 +92,9 @@ def entanglement_entropy(Psi_inp):
         Psi = mpo2mps(Psi_inp)
     else:
         Psi = Psi_inp.copy()
-    ds = [Psi[0].shape[0]]
-    L = len(Psi)
-    T = Psi[0]
 
-    for psi in Psi[1:]:
-        T = np.tensordot(T, psi, [-1,1])
-        ds.append(psi.shape[0])
-    T = T.reshape(np.product(ds[:L//2]), np.product(ds[L//2:]))
-    s = np.linalg.svd(T, compute_uv=False)
-    s = s[s > 1.e-8]
-    return -np.sum(s**2 * np.log(s**2))
+    s = mps_entanglement_spectrum(Psi)[len(Psi)//2]
+    return -np.sum((s**2) * np.log(s**2))
 
 def invert_mpo(mpo):
     """ Inverts an MPO along non physical degrees of freedom """
@@ -273,7 +268,7 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2):
 
     # Variational moses move
 
-    #A0, Lambda = moses_move_shifted(Psi_copy, A=A0, Lambda=Lambda)
+    A0, Lambda = moses_move_shifted(Psi_copy, A=A0, Lambda=Lambda)
     return A0, Lambda
 
 def contract_diagonal_expansion(A0, Lambda):
@@ -349,16 +344,14 @@ def multiple_diagonal_expansions(Psi, n):
     count_no_change = 0
 
     for i in range(n):
-        print(eta_max, i)
         if eta_max == 0:
             return As, Lambda, info
         A0, Lambda = diagonal_expansion(Lambda.copy(), eta=eta_max)
                         
         As.append(A0)
         Lambda = mps_2form(Lambda, 'B')
-        #info['Ss'].append(entanglement_entropy(Lambda))
+        info['Ss'].append(entanglement_entropy(Lambda))
         info['Lambdas'].append(Lambda)
-
         if i == 0:
             eta_max = largest_power_of_two(eta_max)
         else:
@@ -374,24 +367,18 @@ def largest_power_of_two(num):
     return int(power_of_two / 2.)
 
 if __name__ == '__main__':
-    tebd_state, _, _ = tebd(10, 1.5, 0.1)
-    Psi = mps2mpo(tebd_state.copy())
-    Lambda = Psi.copy()
-    As, Lambda, info = multiple_diagonal_expansions(Psi,10)
-    out = contract_series_diagonal_expansions(As, Lambda)
-    
+    fnames = [f"T{round(i,1)}.pkl" for i in np.linspace(0, 1.0, 11)]
+    for fname in fnames:
+        with open(f"/space/ge38huj/state_approximation/sh_data/{fname}", "rb") as f:
+            sh_state = pickle.load(f)
+        Psi = mps2mpo(sh_state.copy())
+        Lambda = Psi.copy()
+        print("Starting expansion")
+        As, Lambda, info = multiple_diagonal_expansions(Psi,10)
+        out = contract_series_diagonal_expansions(As, Lambda)
+        overlap = mps_overlap(out, Psi)
 
-    # No halving, no variational
-    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(10,4))
-    ax.semilogy(info['Ss'], 'o-')
-    ax.set_ylabel("Entanglement entropy", fontsize=14)
-    ax.set_xlabel("Number of iterations", fontsize=14)
-
-    plt.yticks(fontsize=12)
-    plt.xticks(fontsize=12)
-    ax.set_title("Variational " + rf"$\langle\Psi|\tilde\Psi\rangle = {round(mps_overlap(out, Psi),5)}$", fontsize=16)
-    plt.tight_layout()
-
-    plt.savefig("img/nv_vs_v_mm.png", bbox_inches='tight', dpi=150)
-
-
+        output_file = dict(As=As, Lambda=Lambda, info=info, fidelity=overlap)
+        
+        with open(f"sh_comparison/{fname}", "wb+") as f:
+            pickle.dump(output_file, f)

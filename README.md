@@ -10,7 +10,7 @@ The variational optimization (starting from the Moses Move guess) consistently
 improves the fidelity with the original state.
 
 ## TODO
-* Bug for complex wavefunctions -- need to track down.
+* Bug for complex wavefunctions -- it's unclear what the correct conjugations should be and I'm not sure why.
 * Add the remaining images to README
 * Benchmark on different states
 * Experiment with more disentanglers
