@@ -6,6 +6,14 @@ This library uses the Moses Move (see https://arxiv.org/abs/1902.05100) to decom
 ![image](img/dimerized_heisenberg_var.png)
 ![image](img/dimerized_heisenberg_nonvar.png)
 
+### Sheng-Hsuan's wavefunctions
+![image](img/T0.0.png) ![image](img/T0.1.png)
+![image](img/T0.2.png) ![image](img/T0.3.png)
+![image](img/T0.4.png) ![image](img/T0.5.png)
+![image](img/T0.6.png) ![image](img/T0.7.png)
+![image](img/T0.8.png) ![image](img/T0.9.png)
+![image](img/T1.0.png)
+
 The variational optimization (starting from the Moses Move guess) consistently
 improves the fidelity with the original state.
 
