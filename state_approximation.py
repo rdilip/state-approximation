@@ -3,23 +3,20 @@ Module that variationally decomposes an MPS into a series of quantum gates
 and a low-entanglement MPS
 """
 
-from renyin_splitter import split_psi 
 from rfunc import pad, pad_mps
 from misc import group_legs, ungroup_legs, mps_2form, mps_overlap, mpo_on_mpo,\
-     mps_entanglement_spectrum
-import pickle
+     mps_entanglement_spectrum, svd_theta_UsV
 import numpy as np
-import scipy
-import glob
 from scipy.linalg import expm
-import matplotlib.pyplot as plt
 from scipy.stats import unitary_group
 from moses_simple import moses_move as moses_move_simple
-from moses_variational import moses_move as moses_move_variational
-from moses_variational_shifted import moses_move as moses_move_shifted
+from moses_variational_shifted import moses_move as moses_move_shifted,\
+                                      optimize_single_site_sweep_fast
 from disentanglers import disentangle_S2, disentangle_brute
 from tebd import tebd
-
+from glob import glob
+import pickle
+from contraction_shifted import contract_series_diagonal_expansion
 
 def mps2mpo(mps):
     """ Converts an MPS an MPO with Mike and Frank's index conventions
@@ -52,6 +49,21 @@ def mpo2mps(mpo):
         d0, _, chiL, chiR = A.shape
         mps.append(A.reshape((d0, chiL, chiR)))
     return(mps)
+
+def check_isometry(T, axes=[0,1]):
+    """
+    Checks that the tensor is isometric with axes specifying all incoming
+    legs.
+    """
+    all_legs = list(range(len(T.shape)))
+    outgoing_legs = [leg for leg in all_legs if leg not in axes]
+    outgoing_shape = [T.shape[leg] for leg in outgoing_legs]
+    total_outgoing_size = np.prod(outgoing_shape)
+    identity = np.tensordot(T, T.conj(), [axes, axes]).reshape(\
+                            total_outgoing_size, total_outgoing_size)
+    return np.allclose(np.eye(total_outgoing_size), identity)
+
+
 
 def _contract_ABS(A, B, S):
     """ Contracts a tri-split tensor. 
@@ -93,8 +105,9 @@ def entanglement_entropy(Psi_inp):
     else:
         Psi = Psi_inp.copy()
 
-    s = mps_entanglement_spectrum(Psi)[len(Psi)//2]
-    return -np.sum((s**2) * np.log(s**2))
+    spectrum = mps_entanglement_spectrum(Psi)
+    S = [-np.sum((s**2) * np.log(s**2)) for s in spectrum]
+    return S
 
 def invert_mpo(mpo):
     """ Inverts an MPO along non physical degrees of freedom """
@@ -147,7 +160,7 @@ def H_TFI(L, g, J=1.):
                     gl * np.kron(sx, id)).reshape([d]*4))
     return H
 
-def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2):
+def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2, num_sweeps=None):
     """ This performs an expansion where the tensor network shifts diagonally.
       |  |  |  |  | 
     --A--A--A--A--A--
@@ -181,10 +194,11 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2):
         Right column tensor
     """
     # Check MPO
+
     if Psi[0].ndim == 3:
         Psi = mps2mpo(Psi)
     if eta is None:
-        eta = max(sum([i.shape for i in Psi], ()))
+        eta = 2*max(sum([i.shape for i in Psi], ()))
     d = Psi[0].shape[0]
     # Grouping first and second tensor
     Psi = Psi.copy()
@@ -198,12 +212,6 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2):
     psi = psi.reshape([pW1*pW2, pE1*pE2, chiS1, chiN2])
     Psi[1] = psi
     Psi.pop(0)
-
-    #if eta < 4:
-    #    #Psi = pad_mps(Psi, 4)
-    #    #eta_max = 4
-    #else:
-    #    eta_max = eta
 
     truncation_par = {"bond_dimensions": dict(eta_max=eta, chi_max=100), "p_trunc": 0}
     A0, Lambda = moses_move_simple(Psi, truncation_par, disentangler)
@@ -258,8 +266,13 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2):
     psi = np.tensordot(psi, U.conj(), [[0,3],[2,3]]).transpose([4,0,1,5,2,3])
     pL1, pR1, chiS, pL2, pR2, chiN = psi.shape
     psi = psi.reshape(pL1*pR1*chiS, pL2*pR2*chiN)
-   
-    q, r = np.linalg.qr(psi)
+
+    # TODO change this
+    X, s, Z, chi_c, _ = svd_theta_UsV(psi, eta, p_trunc=0.0)
+    q = X
+    r = np.diag(s) @ Z
+    #q, r = np.linalg.qr(psi)
+
     q = q.reshape(pL1, pR1, chiS, -1)
     r = r.reshape(-1, pL2, pR2, chiN).transpose([1,2,0,3])
     Lambda[-1] = q
@@ -267,62 +280,14 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2):
     Lambda.append(r)
 
     # Variational moses move
+    
+    #if num_sweeps is not None:
+    #    A0, Lambda = moses_move_shifted(Psi_copy, A=A0, Lambda=Lambda, N=num_sweeps)
+    if num_sweeps is not None:
+        A0, Lambda, F = moses_move_shifted(Psi_copy, A=A0, Lambda=Lambda, N=num_sweeps, get_fidelity=True)
+    return A0, Lambda, F
 
-    A0, Lambda = moses_move_shifted(Psi_copy, A=A0, Lambda=Lambda)
-    return A0, Lambda
-
-def contract_diagonal_expansion(A0, Lambda):
-    """ Contracts A0 and Lambda with Lambda shifted one tensor upwards.
-    Parameters
-    ----------
-    A0 : list of np.Array
-        Left column mpo
-    Lambda : list of np.Array
-        Right column wavefunction
-    Returns
-    -------
-    contracted : list of np.Array
-        A0.Lambda
-    """
-    out = A0.copy()
-    Lambda = Lambda.copy()
-    for i in range(1, len(A0)-1):
-        prod = np.tensordot(A0[i], Lambda[i-1], [1,0])
-        prod = group_legs(prod, [[0],[3],[1,4],[2,5]])[0]
-        out[i] = prod
-
-    last_tensor = np.tensordot(A0[-1], Lambda[-2], [1,0])
-    last_tensor = np.tensordot(last_tensor, Lambda[-1], [[2,5],[0,2]])
-
-    last_tensor = group_legs(last_tensor, [[0],[2,4],[1,3],[5]])[0]
-    out[-1] = last_tensor
-    return(out)
-
-def contract_series_diagonal_expansions(As, Lambda, n=None):
-    """ Contracts a list of As and a final Lambda wavefunction.
-    Parameters
-    ----------
-    As : list of lists of np.Arrays
-        List of single column wavefunctions shifted relative to each other,
-        contracted from left to right 
-    Lambda : list of np.Array
-        Final physical wavefunction
-    n : int
-        Number of layers to contract (obviously < len(As))
-    Returns
-    -------
-    contracted : list of np.Array
-        Full contracted mps.
-    """
-
-    if n is None:
-        n = len(As)
-    contracted = Lambda.copy()
-    for i in range(-1, -(n + 1), -1):
-        contracted = contract_diagonal_expansion(As[i], contracted)
-    return contracted
-
-def multiple_diagonal_expansions(Psi, n):
+def multiple_diagonal_expansions(Psi, n, mode='half', num_sweeps=None):
     """ Perform n diagonal expansions. Returns all the Ai and Lambda such that
     \prod A_0 A_1...A_{n-1} Lambda ~= Psi
 
@@ -334,28 +299,60 @@ def multiple_diagonal_expansions(Psi, n):
         Wavefunction to expand
     n : int
         Number of contractions. No reason to do more than log_2 chi_max
+    mode : str
+        Style of expansion. Options are half, exact, and single_site, with the
+        following behaviors
+
+        half: Halves the bond dimension at each step, then does variational 
+        sweeps within each layer.
+
+        exact: Exactly peels off a layer. 
+
+        single_site: Exactly peels off layers, but on the final layer, replaces
+        Lambda with a product state and variationally optimizes the state.
+
+        single_site_half: Halves at each step, and does single site optimization
+        at the end (since in principle we might not be at a product state).
+
+    num_sweeps : int 
+        Number of sweeps for variational modes.
+
     """
     As, Lambdas = [], []
     #Ss = [entanglement_entropy(Psi)]
     Lambda = Psi.copy()
     info = dict(Ss=[], Lambdas=[])
     eta_max = max(sum([i.shape for i in Psi], ()))
+    assert mode in ['half', 'single_site', 'exact', 'single_site_half']
+
+    if (mode != 'exact') and (num_sweeps is None):
+        num_sweeps = 10
+    num_sweeps=10
 
     count_no_change = 0
 
     for i in range(n):
         if eta_max == 0:
+            print(f"Reached product state after {i} iterations.")
             return As, Lambda, info
-        A0, Lambda = diagonal_expansion(Lambda.copy(), eta=eta_max)
+        A0, Lambda = diagonal_expansion(Lambda.copy(), eta=eta_max, num_sweeps=num_sweeps)
                         
         As.append(A0)
         Lambda = mps_2form(Lambda, 'B')
         info['Ss'].append(entanglement_entropy(Lambda))
         info['Lambdas'].append(Lambda)
-        if i == 0:
-            eta_max = largest_power_of_two(eta_max)
-        else:
-            eta_max = int(eta_max / 2)
+        if mode == 'half' or mode == 'single_site_half':
+            if i == 0:
+                eta_max = largest_power_of_two(eta_max)
+            else:
+                eta_max = int(eta_max / 2)
+    
+    if Psi[0].ndim == 3:
+        Psi = mps2mpo(Psi)
+    if mode == 'single_site' or mode == 'single_site_half':
+        As, Lambda, F = optimize_single_site_sweep_fast(Psi, As, num_sweeps)
+        return As, Lambda, F
+        
     return As, Lambda, info
 
 def largest_power_of_two(num):
@@ -367,18 +364,39 @@ def largest_power_of_two(num):
     return int(power_of_two / 2.)
 
 if __name__ == '__main__':
-    fnames = [f"T{round(i,1)}.pkl" for i in np.linspace(0, 1.0, 11)]
+    fnames = glob("sh_comparison/*pkl") 
+    
     for fname in fnames:
-        with open(f"/space/ge38huj/state_approximation/sh_data/{fname}", "rb") as f:
-            sh_state = pickle.load(f)
-        Psi = mps2mpo(sh_state.copy())
-        Lambda = Psi.copy()
-        print("Starting expansion")
-        As, Lambda, info = multiple_diagonal_expansions(Psi,10)
-        out = contract_series_diagonal_expansions(As, Lambda)
-        overlap = mps_overlap(out, Psi)
+        print(fname)
+        with open(fname, "rb") as f:
+            data = pickle.load(f)
+        fname = "sh_data/" + fname.split("/")[1]
+        with open(fname, "rb") as f:
+            Psi = pickle.load(f)
 
-        output_file = dict(As=As, Lambda=Lambda, info=info, fidelity=overlap)
-        
-        with open(f"sh_comparison/{fname}", "wb+") as f:
-            pickle.dump(output_file, f)
+        As = data['As']
+        Lambda = data['Lambda']
+
+        Psi = mps2mpo(Psi)
+        As, Lambda, Fs = optimize_single_site_sweep_fast(Psi, As)
+
+        fname = "adam_comparison/" + fname.split("/")[1]
+        with open(fname, "wb+") as f:
+            pickle.dump(dict(As=As, Lambda=Lambda, Fs=Fs), f)
+
+    #Ts = np.linspace(0.0, 9.9, 100)
+    #fnames = [f"T{round(i,1)}.pkl" for i in Ts]
+    #for i, fname in enumerate(fnames):
+    #    with open(f"/space/ge38huj/state_approximation/sh_data/{fname}", "rb") as f:
+    #        sh_state = pickle.load(f)
+    #    Psi = mps2mpo(sh_state.copy())
+    #    Lambda = Psi.copy()
+    #    print("Starting expansion")
+    #    As, Lambda, info = multiple_diagonal_expansions(Psi,100)
+    #    out = contract_series_diagonal_expansions(As, Lambda)
+    #    overlap = mps_overlap(out, Psi)
+
+    #    output_file = dict(As=As, Lambda=Lambda, info=info, fidelity=overlap, T=Ts[i])
+    #    
+    #    with open(f"sh_comparison_500_sweeps/{fname}", "wb+") as f:
+    #        pickle.dump(output_file, f)

@@ -11,8 +11,7 @@ from scipy.stats import unitary_group
 
 def disentangle_S2(theta,eps = 1e-9, max_iter = 200):
     ml,d1,d2,mr=theta.shape
-    U = np.eye(d1*d2, dtype = theta.dtype)
-    
+    U = np.eye(d1*d2, dtype=theta.dtype)    
     m = 0
     go = True
     Ss = []
@@ -20,7 +19,7 @@ def disentangle_S2(theta,eps = 1e-9, max_iter = 200):
         s, u = U2(theta) 
         U = np.dot(u, U)
         u = u.reshape((d1,d2,d1,d2))
-        theta = np.tensordot(u, theta, axes = [[2, 3], [1, 2]]).transpose([2, 0, 1, 3])
+        theta = np.tensordot(u.conj(), theta, axes = [[2, 3], [1, 2]]).transpose([2, 0, 1, 3])
         Ss.append(s)
         if m > 1:
             go = Ss[-2] - Ss[-1] > eps

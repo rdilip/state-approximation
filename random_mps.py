@@ -1,7 +1,10 @@
 """
 A variety of functions to produce different random MPSs
 """
+from scipy.stats import unitary_group
+from misc import *
 import numpy as np
+from misc import mps_overlap
 
 def random_mps_uniform(L, chi=50, d=2, seed=12345):
     """ Generates a random MPS with a fixed bond dimension """
@@ -83,11 +86,10 @@ def random_mps_N_unitaries(L, num_unitaries):
     d = 2
     for i in range(L):
         b = np.zeros((d, 1, 1))
-        b[np.random.choice(range(d)), 0, 0] = 1.0
+        b[0,0,0] = 1.0
         Psi.append(b)
     for i in range(num_unitaries):
         j = i % (L - 1)
-        #print(f"applying unitary to site {0}, {1}".format(j, j+1))
         U = unitary_group.rvs(4).reshape([2,2,2,2])
         theta = np.tensordot(Psi[j], Psi[j+1], [2,1])
         theta = np.tensordot(U, theta, [[2,3],[0,2]]).transpose([2,0,1,3])
@@ -97,6 +99,8 @@ def random_mps_N_unitaries(L, num_unitaries):
         q, r = np.linalg.qr(theta)
         Psi[j] = q.reshape((chiL,d1,-1)).transpose([1,0,2])
         Psi[j+1] = r.reshape((-1,d2,chiR)).transpose([1,0,2])
+        Psi = mps_2form(Psi, 'B')
     return(mps_2form(Psi, 'B'))
+
 
 

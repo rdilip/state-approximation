@@ -139,7 +139,7 @@ def split_psi(Psi,
     s = np.linalg.svd(theta, compute_uv=False)
     s = s[np.abs(s) > 1.e-10]
     A = np.tensordot(A,
-                 np.reshape(np.conj(U), (dL, dR, dL * dR)),
+                 np.reshape(U, (dL, dR, dL * dR)),
                  axes=([1], [2]))
 
     theta = np.transpose(theta, [1, 0, 2, 3])
