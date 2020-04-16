@@ -129,9 +129,7 @@ def mps_invert(Psi):
     np = Psi[0].ndim - 2
     return [b.transpose(list(range(np)) + [-1, -2]) for b in Psi[::-1]]
 
-
-
-def mps_2form(Psi, form='A', normalize=False):
+def mps_2form(Psi, form='A', normalize=False, chi_max=None, svd_min=None):
     """Puts an mps with an arbitrary # of legs into A or B-canonical form
     """
 
@@ -143,9 +141,35 @@ def mps_2form(Psi, form='A', normalize=False):
 
     L = len(Psi)
     T = Psi[0]
+
+    if chi_max is not None or svd_min is not None:
+        normalize = True
+
+
     for j in range(L - 1):
         T, pipe = group_legs(T, [[0, 1], [2]])  #view as matrix
-        A, s = np.linalg.qr(T)  #T = A s can be given from QR
+
+        if chi_max is None and svd_min is None:
+            A, s = np.linalg.qr(T)  #T = A s can be given from QR
+        elif chi_max is not None and svd_min is None:
+            A, s, B = np.linalg.svd(T, full_matrices=False)
+            A = A[:, :chi_max]
+            B = B[:chi_max, :]
+            s = s[:chi_max]
+
+            s = s / np.linalg.norm(s)
+            s = np.diag(s) @ B
+        else:
+            A, s, B = np.linalg.svd(T, full_matrices=False)
+            s = s[s > svd_min]
+            chi_max = len(s)
+
+            A = A[:, :chi_max]
+            B = B[:chi_max, :]
+
+            s = s / np.linalg.norm(s)
+            s = np.diag(s) @ B
+
         Psi[j] = ungroup_legs(A, pipe)
         T = np.tensordot(s, Psi[j + 1],
                          axes=[[1],
@@ -264,7 +288,7 @@ def mpo_on_mpo(X, Y, form=None):
     ]
 
     if form is not None:
-        XY = mps_2form(XY, form)
+        XY = (XY, form)
 
     return XY
 

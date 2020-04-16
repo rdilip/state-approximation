@@ -4,10 +4,11 @@ Some functinos for quantum circuits
 
 import numpy as np
 import pickle
+from copy import deepcopy
 import glob
 from misc import mps_2form, mps_overlap
 import warnings
-from state_approximation import mps2mpo, mpo2mps, multiple_diagonal_expansions
+from rfunc import mps2mpo, mpo2mps
 import scipy
 
 def hadamard():
@@ -29,6 +30,20 @@ def product_state(L):
     b = np.zeros((2,1,1))
     b[0,0,0] = 1.
     return [b.copy() for i in range(L)]
+
+def check_unitary(T, axes=[0,1]):
+    """
+    Checks that the tensor is unitary with axes specifying all incoming
+    legs.
+    """
+    all_legs = list(range(len(T.shape)))
+    outgoing_legs = [leg for leg in all_legs if leg not in axes]
+    outgoing_shape = [T.shape[leg] for leg in outgoing_legs]
+    total_outgoing_size = np.prod(outgoing_shape)
+    identity = np.tensordot(T, T.conj(), [axes, axes]).reshape(\
+                            total_outgoing_size, total_outgoing_size)
+    return np.allclose(np.eye(total_outgoing_size), identity)
+
 
 def random_product_state(L):
     Psi = []
@@ -61,7 +76,7 @@ def bell_pair_mps(L, num_unitaries):
         Psi[j+1] = r.reshape(-1, pR, chiR).transpose(1,0,2)
     return Psi
             
-def generate_state_from_unitary_list(Ulist, reverse=False, Lambda=None):
+def generate_state_from_unitary_list(Ulist, reverse=False, Lambda=None, check=False):
     """
     Generates a state from a list of unitary gate layer.
     Parameters
@@ -90,6 +105,9 @@ def generate_state_from_unitary_list(Ulist, reverse=False, Lambda=None):
     Psi = Lambda.copy()
     for Us in Ulist:
         for i,U in enumerate(Us):
+            if check:
+                assert check_isometry(U)
+                assert U.shape == (2,2,2,2)
             theta = np.tensordot(Psi[i], Psi[i+1], [2,1])
             theta = np.tensordot(U, theta, [[0,1],[0,2]]).transpose(2,0,1,3)
             chiL, pL, pR, chiR = theta.shape
@@ -143,52 +161,23 @@ def unitary_to_trivial(T):
     U = np.array([vect, perp]).conj()
     return U
 
-def generate_state_from_unitary_right_to_left(Ulist, Lambda):
+def convert_column_to_unitary_layers(As):
     """
-    Generates a state with a series of unitaries sweeping from right to left.
-    Should be incorporated with previous function (buggy when I tried earlier)
+    Converts a left hand column in TN form to a series of unitary layers. The
+    length of As corresponds to the number of layers. This assumes that the 
+    right hand column is a spin up trivial state.
     """
-    warnings.warn("This was just for debugging and is pretty deprecated")
-    L = len(Lambda)
-    # Some bookkeeping
-    if Lambda[0].ndim == 3:
-        Psi_from_Ulist = mps2mpo(Lambda)
-    else:
-        Psi_from_Ulist = Lambda.copy()
-
-    # Only set up for a single sweep
-    Ulist = Ulist[0].copy()
-
-    assert L-1 == len(Ulist)
-
-    for i in range(L-2,-1,-1):
-        theta = np.tensordot(Psi_from_Ulist[i], Psi_from_Ulist[i+1], [3,2])
-        theta = np.tensordot(Ulist[i], theta, [[0,1],[0,3]])
-        theta = theta.transpose(0,2,3,1,4,5)
-        pL, _, chiW, pR, _, chiE = theta.shape
-        r, q = scipy.linalg.rq(theta.reshape(pL*chiW, pR*chiE), mode='economic')
-        Psi_from_Ulist[i+1] = q.reshape(-1, pR, 1, chiE).transpose(1,2,0,3)
-        Psi_from_Ulist[i] = r.reshape(pL, 1, chiW, -1)
-    return Psi_from_Ulist
-
-def get_initial_guess(Psi, num_layers):
-    """
-    This function uses the moses move to get an initial guess for the unitary
-    series.
-    """
-    Psi = Psi.copy()
-    Psi = [psi.transpose(0,2,1) for psi in Psi[::-1]]
-    As, Lambda, info = multiple_diagonal_expansions(Psi, n=num_layers, mode='single_site_half')
-
-    current_state = Lambda.copy()
+    Lambda = product_state(len(As[0]))
+    As = deepcopy(As)
     Ulist = [A_to_Ulist(a) for a in As[::-1]]
-    Ulist[0] = unitaries_acting_on_trivial_state(As[-1], Lambda)
     Ulist = [[U.transpose(1,0,3,2) for U in Us[::-1]] for Us in Ulist]
-
     return Ulist
 
 if __name__ == '__main__':
-    for fname in glob.glob("sh_data/T*.pkl"):
+    data_points = [round(i, 1) for i in np.linspace(0.5, 10.0, 20)]
+    data_points = [4.0]
+    for data_point in data_points:
+        fname = f"sh_data_long_chi32/T{data_point}.pkl"
         print(fname)
         with open(fname, "rb") as f:
             Psi = pickle.load(f)
@@ -196,5 +185,5 @@ if __name__ == '__main__':
         for i in range(1,6):
             print("\t" + str(i))
             Ulist = get_initial_guess(Psi, i)
-            with open(f"mm_initial_guesses/{i}_layers_{fname}", "wb+") as f:
+            with open(f"mm_initial_guesses_long_chi32/{i}_layers_{fname}", "wb+") as f:
                 pickle.dump(Ulist, f)

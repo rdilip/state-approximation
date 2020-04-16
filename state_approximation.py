@@ -11,59 +11,16 @@ from scipy.linalg import expm
 from scipy.stats import unitary_group
 from moses_simple import moses_move as moses_move_simple
 from moses_variational_shifted import moses_move as moses_move_shifted,\
-                                      optimize_single_site_sweep_fast
+                                      optimize_single_site_sweep_fast,\
+                                      optimize_single_site_sweep_faster
 from disentanglers import disentangle_S2, disentangle_brute
 from tebd import tebd
 from glob import glob
 import pickle
 from contraction_shifted import contract_series_diagonal_expansion
-
-def mps2mpo(mps):
-    """ Converts an MPS an MPO with Mike and Frank's index conventions
-    Parameters
-    ----------
-    mps : list of np.Array
-        Should have index format phys, chiL, chiR
-    Returns
-    -------
-    mpo : list of np.Array
-    """
-    mpo = []
-    for i, A in enumerate(mps):
-        d0, chiL, chiR = A.shape
-        mpo.append(A.reshape((d0, 1, chiL, chiR)))
-    return(mpo)
-
-def mpo2mps(mpo):
-    """ Converts an MPO to an MPS.
-    Parameters
-    ----------
-    mpo : list of np.Array
-        Should have index format p_left, p_right (trivial), chiL, chiR
-    Returns
-    -------
-    mps : list of np.Array
-    """
-    mps = []
-    for i, A in enumerate(mpo):
-        d0, _, chiL, chiR = A.shape
-        mps.append(A.reshape((d0, chiL, chiR)))
-    return(mps)
-
-def check_isometry(T, axes=[0,1]):
-    """
-    Checks that the tensor is isometric with axes specifying all incoming
-    legs.
-    """
-    all_legs = list(range(len(T.shape)))
-    outgoing_legs = [leg for leg in all_legs if leg not in axes]
-    outgoing_shape = [T.shape[leg] for leg in outgoing_legs]
-    total_outgoing_size = np.prod(outgoing_shape)
-    identity = np.tensordot(T, T.conj(), [axes, axes]).reshape(\
-                            total_outgoing_size, total_outgoing_size)
-    return np.allclose(np.eye(total_outgoing_size), identity)
-
-
+import warnings
+from copy import deepcopy
+from rfunc import mps2mpo, mpo2mps, entanglement_entropy
 
 def _contract_ABS(A, B, S):
     """ Contracts a tri-split tensor. 
@@ -86,81 +43,12 @@ def _contract_ABS(A, B, S):
         raise ValueError("Invalid dimensions")
     return(T)
 
-def entanglement_entropy(Psi_inp):
-    """ 
-    Calculates the entanglement entropy (no longer brute force method because
-    did you know computers have finite memory?)
-    Parameters
-    ----------
-    Psi : np.Array
-        Tensor representing wavefunction. Can be a matrix product state but
-        does not have to be.
-    Returns
-    -------
-    S : np.float
-        entanglement entropy of the state
-    """
-    if len(Psi_inp[0].shape) == 4:
-        Psi = mpo2mps(Psi_inp)
-    else:
-        Psi = Psi_inp.copy()
-
-    spectrum = mps_entanglement_spectrum(Psi)
-    S = [-np.sum((s**2) * np.log(s**2)) for s in spectrum]
-    return S
-
 def invert_mpo(mpo):
     """ Inverts an MPO along non physical degrees of freedom """
     return([T.transpose([0,1,3,2]) for T in mpo[::-1]])
 
-def contract_all_mpos(mpos):
-    """ Given a list of MPOS, contracts them all from left to right """
-    out = mpos[0]
-    for mpo in mpos[1:]:
-        out = mpo_on_mpo(out, mpo)
-    return(out)
-
-def H_TFI(L, g, J=1.):
-    """
-    1-d Hamiltonian of TFI model.
-    List of gates for TFI = -g X - J ZZ. Deals with edges to make gX uniform everywhere
-
-    Parameters
-    ----------
-    L : int
-        Length of chain
-    g : float
-        Transverse coupling
-    J : float
-        NN coupling 
-    Returns
-    -------
-    H : list of np.Array
-        List of two site tensors.
-    """
-    sx = np.array([[0, 1], [1, 0]])
-    sz = np.array([[1, 0], [0, -1]])
-    id = np.eye(2)
-    d = 2
-
-    def h(gl, gr, J):
-
-        return (-np.kron(sz, sz) * J - gr * np.kron(id, sx) -
-                gl * np.kron(sx, id)).reshape([d] * 4)
-
-    H = []
-    for j in range(L - 1):
-        gl = 0.5 * g
-        gr = 0.5 * g
-        if j == 0:
-            gl = g
-        if j == L - 2:
-            gr = g
-        H.append((-J * np.kron(sz, sz) - gr* np.kron(id, sx) -\
-                    gl * np.kron(sx, id)).reshape([d]*4))
-    return H
-
-def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2, num_sweeps=None):
+def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2, num_sweeps=None,
+                        final_run=False):
     """ This performs an expansion where the tensor network shifts diagonally.
       |  |  |  |  | 
     --A--A--A--A--A--
@@ -193,6 +81,18 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2, num_sweeps=No
     Lambda : list of np.Array
         Right column tensor
     """
+    # Padding to make sure we get nice 2 site gates....
+    L = len(Psi)
+    Psi = deepcopy(Psi)
+    max_bond_dim = max(sum([i.shape for i in Psi], ()))
+    if max_bond_dim < 4:
+        for i in range(L):
+            shape = Psi[i].shape
+            if i != L-1:
+                Psi[i] = pad(Psi[i], -1, 4)
+            if i != 0:
+                Psi[i] = pad(Psi[i], -2, 4)
+            
     # Check MPO
 
     if Psi[0].ndim == 3:
@@ -233,9 +133,10 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2, num_sweeps=No
     pL, pR, chiS, chiN = psi.shape
     # assert pR == 4
     assert chiN == 1
-    if pR == 4:
-        psi = psi.reshape(pL, d, d, chiS, chiN).transpose([0,1,3,4,2]).reshape(pL,d,chiS,d)
-    A0[-1] = psi
+    if pR != 4:
+        psi = pad(psi, 1, 4)
+    psi = psi.reshape(pL, d, d, chiS, chiN).transpose([0,1,3,4,2]).reshape(pL,d,chiS,d)
+    A0[-1] = psi.copy()
 
     # send second physical leg to the top
 
@@ -243,7 +144,6 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2, num_sweeps=No
     psi = Lambda[-1]
     pL, pR, chiS, chiN = Lambda[-1].shape
     assert(pR == chiN == 1)
-    #assert pL == 4
     if pL != 4:
         psi = pad(psi, 0, 4)
 
@@ -254,8 +154,7 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2, num_sweeps=No
 
      
     Utheta, U = disentangler(theta)
-    if A0[-1].shape[3] != 2:
-        A0[-1] = pad(A0[-1], 3, 2)
+    debug = A0.copy()
     A0[-1] = np.tensordot(A0[-1], U, [[1,3],[2,3]]).transpose([0,2,1,3])
 
     # NOTE: I think there may be a bug somewhere here, that we're only
@@ -284,10 +183,21 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2, num_sweeps=No
     #if num_sweeps is not None:
     #    A0, Lambda = moses_move_shifted(Psi_copy, A=A0, Lambda=Lambda, N=num_sweeps)
     if num_sweeps is not None:
-        A0, Lambda, F = moses_move_shifted(Psi_copy, A=A0, Lambda=Lambda, N=num_sweeps, get_fidelity=True)
+        if final_run:
+            print("Final run starting")
+
+        A0, Lambda, F = moses_move_shifted(Psi_copy, 
+                                           A=A0,
+                                           Lambda=Lambda,
+                                           N=num_sweeps,
+                                           get_fidelity=True,
+                                           final_run=final_run)
     return A0, Lambda, F
 
-def multiple_diagonal_expansions(Psi, n, mode='half', num_sweeps=None):
+def multiple_diagonal_expansions(Psi, 
+                                 depth, 
+                                 num_sweeps=10,
+                                 schedule_eta=None):
     """ Perform n diagonal expansions. Returns all the Ai and Lambda such that
     \prod A_0 A_1...A_{n-1} Lambda ~= Psi
 
@@ -297,64 +207,91 @@ def multiple_diagonal_expansions(Psi, n, mode='half', num_sweeps=None):
     ----------
     Psi : list of np.Array
         Wavefunction to expand
-    n : int
+    depth : int
         Number of contractions. No reason to do more than log_2 chi_max
-    mode : str
-        Style of expansion. Options are half, exact, and single_site, with the
-        following behaviors
-
-        half: Halves the bond dimension at each step, then does variational 
-        sweeps within each layer.
-
-        exact: Exactly peels off a layer. 
-
-        single_site: Exactly peels off layers, but on the final layer, replaces
-        Lambda with a product state and variationally optimizes the state.
-
-        single_site_half: Halves at each step, and does single site optimization
-        at the end (since in principle we might not be at a product state).
-
     num_sweeps : int 
-        Number of sweeps for variational modes.
-
+        Number of variational sweeps.
+    schedule_eta : list
+        List of bond dimensions. If not supplied, defaults to halving. 
     """
-    As, Lambdas = [], []
-    #Ss = [entanglement_entropy(Psi)]
-    Lambda = Psi.copy()
-    info = dict(Ss=[], Lambdas=[])
-    eta_max = max(sum([i.shape for i in Psi], ()))
-    assert mode in ['half', 'single_site', 'exact', 'single_site_half']
 
-    if (mode != 'exact') and (num_sweeps is None):
-        num_sweeps = 10
-    num_sweeps=10
+    if schedule_eta[0] is None:
+        MODE = 'auto'
+    else:
+        MODE = 'p_trunc'
+
+    if Psi[0].ndim == 3:
+        Psi = mps2mpo(Psi)
+    max_bond_dim = max(sum([i.shape for i in Psi], ()))
+    if schedule_eta is None:
+        schedule_eta = [max_bond_dim for i in range(depth)]
+
+    As, Lambdas = [], []
+    Lambda = Psi.copy()
+    info = dict(Ss=[], Lambdas=[], fidelities=[])
+    eta_max = max(sum([i.shape for i in Psi], ()))
 
     count_no_change = 0
+    product_state = False
+    prev_eta = max_bond_dim
+    
+    schedule = []
 
-    for i in range(n):
-        if eta_max == 0:
+    for i in range(depth):
+        if type(schedule_eta[i]) == float or type(schedule_eta[i]) == np.float64:
+            if i == depth - 1:
+                eta_max = 1
+            else:
+                s = mps_entanglement_spectrum(Lambda)[int(len(Lambda)//2)]
+                eta_max = len(s) - np.where(np.cumsum((s**2)[::-1]) > schedule_eta[i])[0][0]
+            schedule.append(eta_max)
+        else:
+            eta_max = schedule_eta[i]
+
+        if MODE == 'auto':
+            A0_trial, Lambda_trial, F = diagonal_expansion(Lambda.copy(), eta=10000, num_sweeps=num_sweeps,\
+                                           final_run=False)
+            s = mps_entanglement_spectrum(Lambda_trial)[int(len(Lambda_trial)//2)]
+            ee = -np.sum((s**2) * np.log(s**2))
+            desired_ee = ee * ((depth - (i+1)) / float(depth))
+            all_possible_truncations = []
+            for chi_max in range(len(s)):
+                s_trunc = s[:chi_max+1]
+                all_possible_truncations.append(s_trunc / np.linalg.norm(s_trunc))
+            all_possible_ee = [-np.sum((s**2) * np.log(s**2)) for s in all_possible_truncations]
+            eta_max = np.argmin(np.abs(all_possible_ee - desired_ee)) + 1
+
+
+        print("\t" + f"eta_max={eta_max}")
+        if prev_eta == 1:
             print(f"Reached product state after {i} iterations.")
-            return As, Lambda, info
-        A0, Lambda = diagonal_expansion(Lambda.copy(), eta=eta_max, num_sweeps=num_sweeps)
-                        
+            break
+        if i == depth-1 and eta_max != 1:
+            breakpoint()
+            print("On the final run, but final state won't be trivial.")
+
+        prev_eta = eta_max
+        if eta_max == 1:
+            num_sweeps *= 2
+
+        A0, Lambda, F = diagonal_expansion(Lambda.copy(), eta=eta_max, num_sweeps=num_sweeps,\
+                                           final_run=(eta_max==1))
         As.append(A0)
+        
+
         Lambda = mps_2form(Lambda, 'B')
         info['Ss'].append(entanglement_entropy(Lambda))
         info['Lambdas'].append(Lambda)
-        if mode == 'half' or mode == 'single_site_half':
-            if i == 0:
-                eta_max = largest_power_of_two(eta_max)
-            else:
-                eta_max = int(eta_max / 2)
-    
+        info['fidelities'].append(F)
+        
+    info['schedule'] = schedule
+
     if Psi[0].ndim == 3:
         Psi = mps2mpo(Psi)
-    if mode == 'single_site' or mode == 'single_site_half':
-        As, Lambda, F = optimize_single_site_sweep_fast(Psi, As, num_sweeps)
-        return As, Lambda, F
-        
+
     return As, Lambda, info
 
+        
 def largest_power_of_two(num):
     """ Returns the largest power of two less than this number """
     assert num > 1

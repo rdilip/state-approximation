@@ -37,6 +37,65 @@ import scipy as sp
 
 def get_N(Nmax = 1): return(np.diag(np.arange(Nmax + 1)))
 
+def entanglement_entropy(Psi_inp):
+    """ 
+    Calculates the entanglement entropy (no longer brute force method because
+    did you know computers have finite memory?)
+    Parameters
+    ----------
+    Psi : np.Array
+        Tensor representing wavefunction. Can be a matrix product state but
+        does not have to be.
+    Returns
+    -------
+    S : np.float
+        entanglement entropy of the state
+    """
+    if len(Psi_inp[0].shape) == 4:
+        Psi = mpo2mps(Psi_inp)
+    else:
+        Psi = Psi_inp.copy()
+
+    spectrum = mps_entanglement_spectrum(Psi)
+    S = [-np.sum((s**2) * np.log(s**2)) for s in spectrum]
+    return S
+
+
+
+def mps2mpo(mps):
+    """ Converts an MPS an MPO with Mike and Frank's index conventions
+    Parameters
+    ----------
+    mps : list of np.Array
+        Should have index format phys, chiL, chiR
+    Returns
+    -------
+    mpo : list of np.Array
+    """
+    mpo = []
+    for i, A in enumerate(mps):
+        d0, chiL, chiR = A.shape
+        mpo.append(A.reshape((d0, 1, chiL, chiR)))
+    return(mpo)
+
+def mpo2mps(mpo):
+    """ Converts an MPO to an MPS.
+    Parameters
+    ----------
+    mpo : list of np.Array
+        Should have index format p_left, p_right (trivial), chiL, chiR
+    Returns
+    -------
+    mps : list of np.Array
+    """
+    mps = []
+    for i, A in enumerate(mpo):
+        d0, _, chiL, chiR = A.shape
+        mps.append(A.reshape((d0, chiL, chiR)))
+    return(mps)
+
+
+
 def pad(T, axis, num):
     """ Given a tensor T with a shape (s1, s2,..., s_{axis},.. sn), pads 
     with 0s until the new shape is (s1, s2,... s_{axis-1},... num,... sn)

@@ -4,7 +4,8 @@ Module for contractions in the shifted protocol.
 
 import numpy as np
 import warnings
-from misc import group_legs
+from misc import group_legs, mps_2form
+from rfunc import mps2mpo, mpo2mps
 
 def contract_diagonal_expansion_top(A0, Lambda):
     """ 
@@ -146,5 +147,6 @@ def contract_series_diagonal_expansion(As, Lambda, n=None, mode='exact'):
         contracted = Lambda.copy()
         for i in range(n-1, -1, -1):
             contracted = contract_diagonal_expansion_top(As[i], contracted)
+            contracted = mps_2form(contracted, form='A', svd_min=1.e-10)
     return contracted
 

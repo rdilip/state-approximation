@@ -2,11 +2,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy
+from rfunc import mps2mpo
 from contraction_shifted import contract_series_diagonal_expansion,\
                                 contract_diagonal_expansion_bottom,\
                                 contract_diagonal_expansion_top
 from misc import mpo_on_mpo, mps_overlap
 from glob import glob
+from quantum_circuits import *
 import time
 
 def var_1site_Lambda(Psi, A, Lambda):
@@ -145,7 +147,7 @@ def var_A(Psi, A, Lambda, Lp_list=None):
 
     return Ap
 
-def moses_move(Psi, A, Lambda, N=10, get_fidelity=False):
+def moses_move(Psi, A, Lambda, N=10, get_fidelity=False, final_run=False):
     fidelities = []
     for i in range(N):
         Lambda, Lp_list = var_1site_Lambda(Psi, A, Lambda)
@@ -153,6 +155,17 @@ def moses_move(Psi, A, Lambda, N=10, get_fidelity=False):
         if get_fidelity:
             out = contract_diagonal_expansion_top(A, Lambda)
             fidelities.append(np.linalg.norm(mps_overlap(out, Psi)))
+    if final_run:
+        L = len(Lambda)
+        for i in range(L-1):
+            A[i+1] = np.tensordot(A[i+1], unitary_to_trivial(Lambda[i]).conj(), [1,1]).transpose(0,3,1,2)
+        A[-1] = np.tensordot(A[-1], unitary_to_trivial(Lambda[-1]).conj(), [3,1])
+        Lambda = mps2mpo(product_state(L))
+        
+        if get_fidelity:
+            out = contract_diagonal_expansion_top(A, Lambda)
+            fidelities[-1] = np.linalg.norm(mps_overlap(out, Psi))
+
     if get_fidelity:
         return A, Lambda, fidelities
     else:
@@ -201,11 +214,131 @@ def apply_Us_to_A(A, Us):
     A[n-1] = np.tensordot(A[n-1], Us[n-1].conj(), [3,0])
     return A
 
-def optimize_single_site_sweep_fast(Psi, As, Lp_list=None):
+def optimize_single_site_sweep_faster(Psi, As, num_sweeps=100):
+    """
+    Performs a series of sweeps from top to bottom to optimize As against a 
+    one site wavefunction
+    """
     m = 0
     F = []
     go = True
-    while m < 100 and go:
+
+    L = len(Psi)
+    Psi = Psi.copy()
+    As = As.copy()
+    Psi = [psi.transpose([1,0,2,3]) for psi in Psi]
+    Us = [np.eye(2) for i in range(L)]
+    assert np.allclose(L, [len(A) for A in As])
+
+    b = np.zeros([2,1,1,1])
+    b[0,0,0,0] = 1.0
+    Lambda = [b.copy() for i in range(L)]
+
+    A0 = [a.conj() for a in As[0]]
+    A = mpo_on_mpo(Psi, A0)
+    for i in range(1, len(As)):
+        Ai = [a.conj() for a in As[i]]
+        A = contract_diagonal_expansion_bottom(A, Ai)
+
+    print("Completed initial contraction, starting optimizations")
+
+    # TODO check that Lp_list works 
+    A, Us, Lambda, Lp_list = _optimize_single_site_sweep_faster(A, Lambda)
+    A_ = apply_Us_to_A(As[-1], Us)
+    As[-1] = A_
+    out = contract_series_diagonal_expansion(As, Lambda, mode='top')
+    F.append(np.linalg.norm(mps_overlap(out, Psi)))
+
+    while m < num_sweeps and go:
+        print(m)
+        A, Us, Lambda, Lp_list = _optimize_single_site_sweep_faster(A, Lambda, Lp_list=None)
+        A_ = apply_Us_to_A(As[-1], Us)
+        As[-1] = A_
+        out = contract_series_diagonal_expansion(As, Lambda, mode='top')
+        F.append(np.linalg.norm(mps_overlap(out, Psi)))
+        if m > 2:
+            go = np.abs(F[-1] - F[-2]) > 1.e-30
+        m += 1
+
+    A = apply_Us_to_A(As[-1], Us)
+    As[-1] = A
+
+    return As, Lambda, F
+
+def _optimize_single_site_sweep_faster(A, Lambda, Lp_list=None):
+    """
+    Performs a single sweep from top to bottom of the single site optimization.
+    optimize_single_site() just calls this function multiple times. Takes 
+    advantage of trivial legs to run faster than the normal contraction method.
+    Also doesn't recompute left column and Lp_list each time
+    Parameters
+    ----------
+    Psi : list of np.Array
+        Wavefunction (in MPS or MPO form) to be decomposed. 
+    As : list of list of np.Array
+        List of column wavefunctions, evaluated left to right using shifted
+        protocol.
+    Returns
+    -------
+    Us : list of np.Array
+        List of unitaries 
+    As : list of list of np.Array
+        List of column wavefunctions. This is the same as the original list, 
+        but As[-1] has been contracted with Us.
+    Lambda : list of np.Array
+        Product state
+    """
+
+    L = len(Lambda)
+    Us = [np.eye(2) for i in range(L)]
+    first_shape, last_shape = A[0].shape, A[-1].shape
+
+    # Lp_list[i] is the environment below tensor i in Lambda
+    if Lp_list is None:
+        print("Lp list ")
+        Lp = A[0].reshape(first_shape[0], first_shape[1], first_shape[3]).transpose(0,2,1)
+        Lp_list = [Lp]
+        for i in range(1, L):
+            Lp = np.tensordot(Lp, A[i].conj(), [1,2])
+            Lp = np.tensordot(Lp, Lambda[i-1].conj(), [[3,0,1],[0,1,2]])
+            Lp_list.append(Lp)
+
+    # Rp_list[i] is the environment above tensor i on A
+    shape = Lambda[-1].shape
+    Rp = Lambda[-1].reshape(shape[0], shape[1], shape[2]).transpose(0,2,1)
+    env = np.tensordot(Lp_list[-1], Rp, [[0,2],[2,1]])
+    assert env.shape == (2,2)
+    X, S, Z = np.linalg.svd(env, full_matrices=False)
+    U = X @ Z
+    Us[-1] = U
+
+    A[-1] = np.tensordot(A[-1], U, [3,0])
+
+    for i in range(L-1, 0, -1):
+        Lp = Lp_list[i-1]
+        Lp_i = np.tensordot(Lp, A[i].conj(), [1,2])
+        Lp_i = np.tensordot(Lp_i, Lambda[i-1].conj(), [[0,1],[1,2]])
+        env = np.tensordot(Lp_i, Rp, [[2,4,0],[0,1,2]])
+        X, S, Z = np.linalg.svd(env, full_matrices=False)
+        U = X @ Z
+        Us[i-1] = U
+        A[i] = np.tensordot(A[i], U, [1,0]).transpose(0,3,1,2)
+        Lp_i = np.tensordot(Lp_i, U, [1,0])
+        Lp_i = np.einsum('ijklk->ijl', Lp_i)
+        Lp_list[i] = Lp_i
+
+        Rp = np.tensordot(Rp, A[i].conj(), [[0,2],[3,0]])
+        Rp = np.tensordot(Rp, Lambda[i-1].conj(), [[0,1],[3,0]]).transpose(0,2,1)
+    return A, Us, Lambda, Lp_list
+
+    return As, Us, Lambda, Lp_list
+
+def optimize_single_site_sweep_fast(Psi, As, num_sweeps=100):
+    m = 0
+    F = []
+    go = True
+    # TODO check that Lp_list works 
+    while m < num_sweeps and go:
         As, Us, Lambda, Lp_list = _optimize_single_site_sweep_fast(Psi, As, Lp_list = None)
         out = contract_series_diagonal_expansion(As, Lambda, mode='top')
         F.append(np.linalg.norm(mps_overlap(out, Psi)))
@@ -252,7 +385,7 @@ def _optimize_single_site_sweep_fast(Psi, As, Lp_list=None):
     for i in range(1, len(As)):
         Ai = [a.conj() for a in As[i]]
         A = contract_diagonal_expansion_bottom(A, Ai)
-
+    print("Completed contraction")
     assert A[0].shape[2] == 1
     first_shape, last_shape = A[0].shape, A[-1].shape
 
@@ -296,6 +429,7 @@ def _optimize_single_site_sweep_fast(Psi, As, Lp_list=None):
     As[-1] = A
 
     return As, Us, Lambda, Lp_list
+
 
 def _optimize_single_site_sweep(Psi, As):
     """ 
