@@ -8,7 +8,7 @@ from copy import deepcopy
 import glob
 from misc import mps_2form, mps_overlap
 import warnings
-from rfunc import mps2mpo, mpo2mps
+from rfunc import mps2mpo, mpo2mps, entanglement_entropy
 import scipy
 
 def hadamard():
@@ -76,7 +76,11 @@ def bell_pair_mps(L, num_unitaries):
         Psi[j+1] = r.reshape(-1, pR, chiR).transpose(1,0,2)
     return Psi
             
-def generate_state_from_unitary_list(Ulist, reverse=False, Lambda=None, check=False):
+def generate_state_from_unitary_list(Ulist,
+                                     reverse=False,
+                                     Lambda=None,
+                                     check=False,
+                                     entanglement=False):
     """
     Generates a state from a list of unitary gate layer.
     Parameters
@@ -87,6 +91,10 @@ def generate_state_from_unitary_list(Ulist, reverse=False, Lambda=None, check=Fa
         The starting state (usually a product state)
     reverse : bool
         If true, applies the sequence from right to left.
+    check : bool
+        If true checks that everything is a unitary
+    entanglement : bool
+        if true, returns the entanglement at each layer.
     """
     if Lambda is None:
         print("Starting from trivial state")
@@ -99,14 +107,14 @@ def generate_state_from_unitary_list(Ulist, reverse=False, Lambda=None, check=Fa
 
     if reverse:
         print("Sweeping from right to left.")
-        Ulist = [[i.transpose(1,0,3,2) for i in Us[::-1]] for Us in Ulist]
         Lambda = [l.transpose(0,2,1) for l in Lambda[::-1]]
+    Ss = [0.0]
 
-    Psi = Lambda.copy()
+    Psi = deepcopy(Lambda)
     for Us in Ulist:
         for i,U in enumerate(Us):
             if check:
-                assert check_isometry(U)
+                assert check_unitary(U)
                 assert U.shape == (2,2,2,2)
             theta = np.tensordot(Psi[i], Psi[i+1], [2,1])
             theta = np.tensordot(U, theta, [[0,1],[0,2]]).transpose(2,0,1,3)
@@ -115,9 +123,13 @@ def generate_state_from_unitary_list(Ulist, reverse=False, Lambda=None, check=Fa
 
             Psi[i] = q.reshape(chiL, pL, -1).transpose(1,0,2)
             Psi[i+1] = r.reshape(-1, pR, chiR).transpose(1,0,2)
-            Psi = mps_2form(Psi, 'B')
+        Psi = mps_2form(Psi, 'B')
+        if entanglement:
+            Ss.append(entanglement_entropy(Psi)[len(Psi)//2])
     if reverse:
         return [psi.transpose(0,2,1) for psi in Psi[::-1]]
+    if entanglement:
+        return Psi, Ss
     return Psi
 
 def A_to_Ulist(A):
@@ -125,25 +137,19 @@ def A_to_Ulist(A):
     Converts a column vector A to a list of unitaries, sweeping from right to
     left.
     """
+    # LEFT TO RIGHT
     Ulist = []
-    for a in A:
-        Ulist.append(a.transpose(1,3,2,0))
-    Ulist[1] = np.tensordot(Ulist[1], Ulist[0].reshape(2,2), [2,0]).transpose(0,1,3,2)
-    Ulist.pop(0)
+    for a in A[::-1]:
+        Ulist.append(a.transpose(3,1,0,2))
+    Ulist[-2] = np.tensordot(Ulist[-2], Ulist[-1].reshape(2,2), [3,0])
+    Ulist.pop(-1)
     return Ulist
-
-def unitaries_acting_on_trivial_state(A, Lambda):
-    """ 
-    Given a column vector A acting on a trivial vector Lambda, this function
-    returns a list Ulist of unitaries that acts on the state |0>.
-    """
-    L = len(Lambda)
-    Ulist = A_to_Ulist(A)
-    single_sites = [unitary_to_trivial(l) for l in Lambda]
-    for i in range(L-1):
-        Ulist[i] = np.tensordot(single_sites[i].conj(), Ulist[i], [1, 0])
-    Ulist[L-2] = np.tensordot(single_sites[L-1].conj(), Ulist[L-2],[1,1]).transpose(1,0,2,3)
-    return Ulist
+    #Ulist = []
+    #for a in A:
+    #    Ulist.append(a.transpose(1,3,2,0))
+    #Ulist[1] = np.tensordot(Ulist[1], Ulist[0].reshape(2,2), [2,0]).transpose(0,1,3,2)
+    #Ulist.pop(0)
+    #return Ulist
 
 def perpendicular_vector(vect):
     angles = np.angle(vect)
@@ -167,10 +173,9 @@ def convert_column_to_unitary_layers(As):
     length of As corresponds to the number of layers. This assumes that the 
     right hand column is a spin up trivial state.
     """
-    Lambda = product_state(len(As[0]))
     As = deepcopy(As)
     Ulist = [A_to_Ulist(a) for a in As[::-1]]
-    Ulist = [[U.transpose(1,0,3,2) for U in Us[::-1]] for Us in Ulist]
+    #Ulist = [[U.transpose(1,0,3,2) for U in Us[::-1]] for Us in Ulist]
     return Ulist
 
 if __name__ == '__main__':

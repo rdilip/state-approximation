@@ -227,7 +227,7 @@ def mps_overlap(Psi0, Psi1):
         print(O.shape)
         raise ValueError
 
-    return O[0, 0]
+    return np.linalg.norm(O[0, 0])
 
 
 def mps_entanglement_spectrum(Psi, site_spectrum=None):

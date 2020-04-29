@@ -179,13 +179,7 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2, num_sweeps=No
     Lambda.append(r)
 
     # Variational moses move
-    
-    #if num_sweeps is not None:
-    #    A0, Lambda = moses_move_shifted(Psi_copy, A=A0, Lambda=Lambda, N=num_sweeps)
     if num_sweeps is not None:
-        if final_run:
-            print("Final run starting")
-
         A0, Lambda, F = moses_move_shifted(Psi_copy, 
                                            A=A0,
                                            Lambda=Lambda,
@@ -197,8 +191,11 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2, num_sweeps=No
 def multiple_diagonal_expansions(Psi, 
                                  depth, 
                                  num_sweeps=10,
-                                 schedule_eta=None):
-    """ Perform n diagonal expansions. Returns all the Ai and Lambda such that
+                                 schedule_eta=None,
+                                 schedule_mode='trunc',
+                                 verbose=True):
+    """
+    Perform n diagonal expansions. Returns all the Ai and Lambda such that
     \prod A_0 A_1...A_{n-1} Lambda ~= Psi
 
     By default will halve max bond dimension of Lambda at each step
@@ -213,71 +210,118 @@ def multiple_diagonal_expansions(Psi,
         Number of variational sweeps.
     schedule_eta : list
         List of bond dimensions. If not supplied, defaults to halving. 
+    schedule_mode : str
+        String that determiens how to interpret the schedule. The following 
+        are valid options.
+            * trunc : Throws away schedule_eta[i] on the ith step, but does not
+                      account for any disentangling from the MM.
+            * trunc_exact : Throws away schedule_eta[i] on the ith step. Performs
+                            MM twice to determine how much to throw away.
+            * entropy : Keeps schedule_eta[i] on the ith step, not accounting
+                        for MM disentangling.
+            * entropy_exact : Keeps schedule_eta[i] on the ith step, accounts
+                             for MM disentangling.
+            * bond_dim : Uses max bond dim of schedule_eta[i] on the ith step.
+        The difference between "mode" and "mode_exact" is as follows. When we
+        do the MM on Lambda s.t. Lambda_n = A.Lambda{n+1}, we need to know the
+        bond dimension to truncate at each step. If we just do mode, we guess
+        this bond dimension from Lambda_n, but this will probably be an over-
+        estimate because the MM does some disentangling. If we do mode_exact,
+        it takes 2x the time, but we do the MM, figure out how much entanglement
+        is peeled away, then do the MM again for real. 
     """
-
-    if schedule_eta[0] is None:
-        MODE = 'auto'
-    else:
-        MODE = 'p_trunc'
 
     if Psi[0].ndim == 3:
         Psi = mps2mpo(Psi)
-    max_bond_dim = max(sum([i.shape for i in Psi], ()))
+    max_bond_dim = max(sum([i.shape[-2:] for i in Psi], ()))
     if schedule_eta is None:
         schedule_eta = [max_bond_dim for i in range(depth)]
 
     As, Lambdas = [], []
+    L = len(Psi)
     Lambda = Psi.copy()
     info = dict(Ss=[], Lambdas=[], fidelities=[])
     eta_max = max(sum([i.shape for i in Psi], ()))
-
-    count_no_change = 0
-    product_state = False
     prev_eta = max_bond_dim
     
     schedule = []
 
     for i in range(depth):
-        if type(schedule_eta[i]) == float or type(schedule_eta[i]) == np.float64:
-            if i == depth - 1:
-                eta_max = 1
-            else:
-                s = mps_entanglement_spectrum(Lambda)[int(len(Lambda)//2)]
+        if i != depth - 1:
+            if schedule_mode == 'bond_dim':
+                eta_max = schedule_eta[i]
+            elif schedule_mode == 'trunc':
+                s = mps_entanglement_spectrum(Lambda)[int(L//2)]
                 eta_max = len(s) - np.where(np.cumsum((s**2)[::-1]) > schedule_eta[i])[0][0]
-            schedule.append(eta_max)
-        else:
-            eta_max = schedule_eta[i]
+            elif schedule_mode == 'trunc_exact':
+                A0_trial, Lambda_trial, F = diagonal_expansion(Lambda.copy(),
+                                                               eta=10000,
+                                                               num_sweeps=num_sweeps,
+                                                               final_run=False)
+                s = mps_entanglement_spectrum(Lambda_trial)[int(L//2)]
+                eta_max = len(s) - np.where(np.cumsum((s**2)[::-1]) > schedule_eta[i])[0][0]
+            elif schedule_mode == 'entropy':
+                s = mps_entanglement_spectrum(Lambda)[int(L//2)]
+                all_possible_truncations = []
 
-        if MODE == 'auto':
-            A0_trial, Lambda_trial, F = diagonal_expansion(Lambda.copy(), eta=10000, num_sweeps=num_sweeps,\
-                                           final_run=False)
-            s = mps_entanglement_spectrum(Lambda_trial)[int(len(Lambda_trial)//2)]
-            ee = -np.sum((s**2) * np.log(s**2))
-            desired_ee = ee * ((depth - (i+1)) / float(depth))
-            all_possible_truncations = []
-            for chi_max in range(len(s)):
-                s_trunc = s[:chi_max+1]
-                all_possible_truncations.append(s_trunc / np.linalg.norm(s_trunc))
-            all_possible_ee = [-np.sum((s**2) * np.log(s**2)) for s in all_possible_truncations]
-            eta_max = np.argmin(np.abs(all_possible_ee - desired_ee)) + 1
+                decreasing = True
+
+                diff = np.float('inf')
+                prev_diff = diff
+                for chi_max in range(len(s)+1, 0, -1):
+                    s_trunc = s[:chi_max]
+                    s_trunc /= np.linalg.norm(s_trunc)
+                    ee = -np.sum((s**2) * np.log(s**2))
+                    diff = np.abs(ee - schedule_eta[i])
+                    if diff > prev_diff:
+                        eta_max = chi_max + 1
+                        break
+                    else:
+                        prev_diff = diff
+            elif schedule_mode == 'entropy_exact':
+                if verbose:
+                    print(f"Starting depth {i+1}")
+                A0_trial, Lambda_trial, F = diagonal_expansion(Lambda.copy(),
+                                                               eta=10000,
+                                                               num_sweeps=num_sweeps,
+                                                               final_run=False)
+                s = mps_entanglement_spectrum(Lambda_trial)[int(L//2)]
+                all_possible_truncations = []
+
+                decreasing = True
+
+                diff = np.float('inf')
+                prev_diff = diff
+                for chi_max in range(len(s)+1, 0, -1):
+                    s_trunc = s[:chi_max]
+                    s_trunc /= np.linalg.norm(s_trunc)
+                    ee = -np.sum((s**2) * np.log(s**2))
+                    diff = np.abs(ee - schedule_eta[i] - 0.5)
+                    if diff > prev_diff:
+                        eta_max = chi_max + 1
+                        break
+                    else:
+                        prev_diff = diff 
+            else:
+                raise ValueError("Not a valid scheduling mode.")
 
 
-        print("\t" + f"eta_max={eta_max}")
+        # There is no situation in which we shouldn't be doing this...
+        if i == depth - 1:
+            eta_max = 1
+        schedule.append(eta_max)
+
         if prev_eta == 1:
-            print(f"Reached product state after {i} iterations.")
+            if verbose:
+                print(f"Reached product state after {i} iterations.")
             break
-        if i == depth-1 and eta_max != 1:
-            breakpoint()
-            print("On the final run, but final state won't be trivial.")
 
         prev_eta = eta_max
         if eta_max == 1:
             num_sweeps *= 2
-
         A0, Lambda, F = diagonal_expansion(Lambda.copy(), eta=eta_max, num_sweeps=num_sweeps,\
                                            final_run=(eta_max==1))
         As.append(A0)
-        
 
         Lambda = mps_2form(Lambda, 'B')
         info['Ss'].append(entanglement_entropy(Lambda))
@@ -288,17 +332,42 @@ def multiple_diagonal_expansions(Psi,
 
     if Psi[0].ndim == 3:
         Psi = mps2mpo(Psi)
+    if verbose:
+        print(schedule)
 
     return As, Lambda, info
 
+def expansion_from_left(Psi, depth):
+    """
+    Expands a wavefunction Psi in the following manner. Performs a MM so that
+    Psi = A.Lambda. Contracts Psi with A.conj() (looking at overlap) and throws
+    away Lambda, then performs another moses move. 
+    """
+    Psi = deepcopy(Psi)
+    if Psi[0].ndim == 3:
+        Psi = mps2mpo(Psi)
+    As = []
+    num_sweeps=10
+
+    for i in range(depth):
+        print(i)
+        if i == depth-1:
+            eta_max = 1
+        else:
+            eta_max = max(sum([i.shape[-2:] for i in Psi],()))
+        A0, Lambda, F = diagonal_expansion(Psi,
+                                           eta=eta_max,
+                                           num_sweeps=num_sweeps,
+                                           final_run=(i==depth-1))
+        As.append(deepcopy(A0))
+        A0 = [a.conj() for a in A0]
+        Psi = [psi.transpose(1,0,2,3) for psi in Psi]
+        Psi = mpo_on_mpo(Psi, A0)
+        Psi = [psi.transpose(1,0,2,3) for psi in Psi]
+        return Psi
+    return As, Lambda
         
-def largest_power_of_two(num):
-    """ Returns the largest power of two less than this number """
-    assert num > 1
-    power_of_two = 1.
-    while power_of_two < num:
-        power_of_two *= 2
-    return int(power_of_two / 2.)
+
 
 if __name__ == '__main__':
     fnames = glob("sh_comparison/*pkl") 
@@ -321,19 +390,3 @@ if __name__ == '__main__':
         with open(fname, "wb+") as f:
             pickle.dump(dict(As=As, Lambda=Lambda, Fs=Fs), f)
 
-    #Ts = np.linspace(0.0, 9.9, 100)
-    #fnames = [f"T{round(i,1)}.pkl" for i in Ts]
-    #for i, fname in enumerate(fnames):
-    #    with open(f"/space/ge38huj/state_approximation/sh_data/{fname}", "rb") as f:
-    #        sh_state = pickle.load(f)
-    #    Psi = mps2mpo(sh_state.copy())
-    #    Lambda = Psi.copy()
-    #    print("Starting expansion")
-    #    As, Lambda, info = multiple_diagonal_expansions(Psi,100)
-    #    out = contract_series_diagonal_expansions(As, Lambda)
-    #    overlap = mps_overlap(out, Psi)
-
-    #    output_file = dict(As=As, Lambda=Lambda, info=info, fidelity=overlap, T=Ts[i])
-    #    
-    #    with open(f"sh_comparison_500_sweeps/{fname}", "wb+") as f:
-    #        pickle.dump(output_file, f)

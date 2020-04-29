@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 from scipy.stats import unitary_group
 
-def disentangle_S2(theta,eps = 1e-9, max_iter = 200):
+def disentangle_S2(theta,eps = 1e-9, max_iter = 1000):
     ml,d1,d2,mr=theta.shape
     U = np.eye(d1*d2, dtype=theta.dtype)    
     m = 0
@@ -39,6 +39,7 @@ def disentangle_brute(theta):
     U = cayley(res.x, d1*d2).reshape([d1,d2,d1,d2])
     Utheta = np.tensordot(U, theta, [[2,3],[1,2]]).transpose([2,0,1,3])
     return(Utheta, U)
+
 
 def initial_guess(mode, theta):
     """ Returns an initial guess for a Cayley parametrization of a D by D unitary.
