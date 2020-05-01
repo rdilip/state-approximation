@@ -281,7 +281,7 @@ def multiple_diagonal_expansions(Psi,
                         prev_diff = diff
             elif schedule_mode == 'entropy_exact':
                 if verbose:
-                    print(f"Starting depth {i+1}")
+                    print("Starting depth 0".format(i+1))
                 A0_trial, Lambda_trial, F = diagonal_expansion(Lambda.copy(),
                                                                eta=10000,
                                                                num_sweeps=num_sweeps,
@@ -315,7 +315,7 @@ def multiple_diagonal_expansions(Psi,
 
         if prev_eta == 1:
             if verbose:
-                print(f"Reached product state after {i} iterations.")
+                print("Reached product state after {0} iterations.".format(i))
             break
 
         prev_eta = eta_max
