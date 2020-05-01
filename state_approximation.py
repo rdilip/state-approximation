@@ -13,7 +13,7 @@ from moses_simple import moses_move as moses_move_simple
 from moses_variational_shifted import moses_move as moses_move_shifted,\
                                       optimize_single_site_sweep_fast,\
                                       optimize_single_site_sweep_faster
-from disentanglers import disentangle_S2, disentangle_brute
+from disentanglers import disentangle_S2, disentangle_brute, disentangle_ls
 from tebd import tebd
 from glob import glob
 import pickle
@@ -193,7 +193,8 @@ def multiple_diagonal_expansions(Psi,
                                  num_sweeps=10,
                                  schedule_eta=None,
                                  schedule_mode='trunc',
-                                 verbose=True):
+                                 verbose=True,
+                                 disentangler=disentangle_S2):
     """
     Perform n diagonal expansions. Returns all the Ai and Lambda such that
     \prod A_0 A_1...A_{n-1} Lambda ~= Psi
@@ -245,7 +246,6 @@ def multiple_diagonal_expansions(Psi,
     prev_eta = max_bond_dim
     
     schedule = []
-
     for i in range(depth):
         if i != depth - 1:
             if schedule_mode == 'bond_dim':
@@ -257,7 +257,8 @@ def multiple_diagonal_expansions(Psi,
                 A0_trial, Lambda_trial, F = diagonal_expansion(Lambda.copy(),
                                                                eta=10000,
                                                                num_sweeps=num_sweeps,
-                                                               final_run=False)
+                                                               final_run=False,
+                                                               disentangler=disentangler)
                 s = mps_entanglement_spectrum(Lambda_trial)[int(L//2)]
                 eta_max = len(s) - np.where(np.cumsum((s**2)[::-1]) > schedule_eta[i])[0][0]
             elif schedule_mode == 'entropy':
@@ -284,7 +285,8 @@ def multiple_diagonal_expansions(Psi,
                 A0_trial, Lambda_trial, F = diagonal_expansion(Lambda.copy(),
                                                                eta=10000,
                                                                num_sweeps=num_sweeps,
-                                                               final_run=False)
+                                                               final_run=False,
+                                                               disentangler=disentangler)
                 s = mps_entanglement_spectrum(Lambda_trial)[int(L//2)]
                 all_possible_truncations = []
 
@@ -320,7 +322,7 @@ def multiple_diagonal_expansions(Psi,
         if eta_max == 1:
             num_sweeps *= 2
         A0, Lambda, F = diagonal_expansion(Lambda.copy(), eta=eta_max, num_sweeps=num_sweeps,\
-                                           final_run=(eta_max==1))
+                                           final_run=(eta_max==1), disentangler=disentangler)
         As.append(A0)
 
         Lambda = mps_2form(Lambda, 'B')

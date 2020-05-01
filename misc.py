@@ -158,7 +158,7 @@ def mps_2form(Psi, form='A', normalize=False, chi_max=None, svd_min=None):
             s = s[:chi_max]
 
             s = s / np.linalg.norm(s)
-            s = np.diag(s) @ B
+            s = np.dot(np.diag(s), B)
         else:
             A, s, B = np.linalg.svd(T, full_matrices=False)
             s = s[s > svd_min]
@@ -168,7 +168,7 @@ def mps_2form(Psi, form='A', normalize=False, chi_max=None, svd_min=None):
             B = B[:chi_max, :]
 
             s = s / np.linalg.norm(s)
-            s = np.diag(s) @ B
+            s = np.dot(np.diag(s), B)
 
         Psi[j] = ungroup_legs(A, pipe)
         T = np.tensordot(s, Psi[j + 1],
