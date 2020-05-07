@@ -167,7 +167,7 @@ def log(fname, param):
     """
     msg = fname + ": "
     for k, v in param.items():
-        msg += f"{k}={np.round(v, 3)}, "
+        msg += "{0}={1}, ".format(k, np.round(v,3))
 
     # Check which folder we're in
     moveback = ""
@@ -217,7 +217,7 @@ def write_next_file(obj, identifier, params=None):
     run_params = ": "
     if params:
         for k, v in params.items():
-            run_params += f"{k}={v} "
+            run_params += "{0}={1} ".format(k, v)
    
     with open(fname, "wb+") as f:
         pickle.dump(obj, f)
@@ -242,7 +242,7 @@ def get_next_filename(identifier):
         os.makedirs(loc)
     for fname in glob.glob(identifier + "*.pkl"):
         ix.append(int(fname.split("_")[-1][3:5])) # runXX.pkl
-    return(f"{identifier}_run{str(max(ix) + 1).zfill(2)}.pkl")
+    return("{0}_run{1}.pkl".format(identifier, str(max(ix) + 1).zfill(2)))
 
 def local_state_from_fill(fill, nmax = 1):
     """ Returns a local state at a specified filling.

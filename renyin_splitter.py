@@ -3,6 +3,11 @@ import numpy as np
 from rfunc import pad
 import scipy as sp
 from disentanglers import disentangle_S2, disentangle_brute
+try:
+    from disentangler.cgdisentangler import disentangle_CG
+except SyntaxError:
+    print("CG Disentangler is not operational (Python3)")
+    disentangle_CG = None
 from misc import svd, svd_theta_UsV, group_legs, ungroup_legs
 from warnings import warn
 import time
@@ -128,13 +133,18 @@ def split_psi(Psi,
 
     chiL, d1, d2, chiR = theta.shape
     U = np.eye(d1*d2).reshape(d1,d2,d1,d2)
-    if disentangler == disentangle_S2:
-        theta, U = disentangle_S2(theta,
-                                      eps=10 * eps,
-                                      max_iter=max_iter)
-    else:
-        theta, U  = disentangler(theta)
 
+    other_params = {}
+    if disentangler == disentangle_CG:
+        other_params['n'] = 2
+    if disentangler == disentangle_CG or disentangle_S2:
+        other_params['eps'] = eps
+        other_params['max_iter'] = max_iter
+    theta, U, _ = disentangler(theta, **other_params)
+    if disentangler == disentangle_CG:
+        U = U.conj()
+
+    # NOTE: should this maybe be U.conj()?
     #theta, U = disentangle_brute(theta)
     s = np.linalg.svd(theta, compute_uv=False)
     s = s[np.abs(s) > 1.e-10]

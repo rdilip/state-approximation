@@ -88,7 +88,7 @@ def var_1site_Lambda(Psi, A, Lambda):
     X, S, Z = np.linalg.svd(Lp.reshape(pE*chiS*pW, chiN), full_matrices=False)
     Lambdap[L-1] = X.reshape(pW, pE, chiS, -1)
 
-    R = np.diag(S) @ Z
+    R = np.diag(S).dot(Z)
     assert R.size == 1
     R /= np.linalg.norm(R)
     Lambdap[L-1] = Lambdap[L-1] * R[0,0]
@@ -126,7 +126,7 @@ def var_A(Psi, A, Lambda, Lp_list=None):
             Lp_list.append(Lp)
 
     Ap = [[] for i in range(L)]
-    Ap = A.copy()
+    Ap = deepcopy(A)
 
     Rp = Lambda[-1].conj().transpose([1,3,0,2])
     for i in range(L - 1, 0, -1):
@@ -309,7 +309,7 @@ def _optimize_single_site_sweep_faster(A, Lambda, Lp_list=None):
     env = np.tensordot(Lp_list[-1], Rp, [[0,2],[2,1]])
     assert env.shape == (2,2)
     X, S, Z = np.linalg.svd(env, full_matrices=False)
-    U = X @ Z
+    U = X.dot(Z)
     Us[-1] = U
 
     A[-1] = np.tensordot(A[-1], U, [3,0])
@@ -320,7 +320,7 @@ def _optimize_single_site_sweep_faster(A, Lambda, Lp_list=None):
         Lp_i = np.tensordot(Lp_i, Lambda[i-1].conj(), [[0,1],[1,2]])
         env = np.tensordot(Lp_i, Rp, [[2,4,0],[0,1,2]])
         X, S, Z = np.linalg.svd(env, full_matrices=False)
-        U = X @ Z
+        U = X.dot(Z)
         Us[i-1] = U
         A[i] = np.tensordot(A[i], U, [1,0]).transpose(0,3,1,2)
         Lp_i = np.tensordot(Lp_i, U, [1,0])
@@ -404,7 +404,7 @@ def _optimize_single_site_sweep_fast(Psi, As, Lp_list=None):
     env = np.tensordot(Lp_list[-1], Rp, [[0,2],[2,1]])
     assert env.shape == (2,2)
     X, S, Z = np.linalg.svd(env, full_matrices=False)
-    U = X @ Z
+    U = X.dot(Z)
     Us[-1] = U
 
     A[-1] = np.tensordot(A[-1], U, [3,0])
@@ -415,7 +415,7 @@ def _optimize_single_site_sweep_fast(Psi, As, Lp_list=None):
         Lp_i = np.tensordot(Lp_i, Lambda[i-1].conj(), [[0,1],[1,2]])
         env = np.tensordot(Lp_i, Rp, [[2,4,0],[0,1,2]])
         X, S, Z = np.linalg.svd(env, full_matrices=False)
-        U = X @ Z
+        U = X.dot(Z)
         Us[i-1] = U
         A[i] = np.tensordot(A[i], U, [1,0]).transpose(0,3,1,2)
         Lp_i = np.tensordot(Lp_i, U, [1,0])

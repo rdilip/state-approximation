@@ -182,7 +182,7 @@ if __name__ == '__main__':
     data_points = [round(i, 1) for i in np.linspace(0.5, 10.0, 20)]
     data_points = [4.0]
     for data_point in data_points:
-        fname = f"sh_data_long_chi32/T{data_point}.pkl"
+        fname = "sh_data_long_chi32/T{0}.pkl".format(data_point)
         print(fname)
         with open(fname, "rb") as f:
             Psi = pickle.load(f)
@@ -190,5 +190,6 @@ if __name__ == '__main__':
         for i in range(1,6):
             print("\t" + str(i))
             Ulist = get_initial_guess(Psi, i)
-            with open(f"mm_initial_guesses_long_chi32/{i}_layers_{fname}", "wb+") as f:
+            with open("mm_initial_guesses_long_chi32/{0}_layers_{1}".format(i, fname), "wb+") as f:
                 pickle.dump(Ulist, f)
+
