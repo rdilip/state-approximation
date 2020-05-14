@@ -5,6 +5,7 @@ Module for contractions in the shifted protocol.
 import numpy as np
 import warnings
 from misc import group_legs, mps_2form
+from copy import deepcopy
 from rfunc import mps2mpo, mpo2mps
 
 def contract_diagonal_expansion_top(A0, Lambda):
@@ -26,8 +27,8 @@ def contract_diagonal_expansion_top(A0, Lambda):
     contracted : list of np.Array
         A0.Lambda
     """
-    out = A0.copy()
-    Lambda = Lambda.copy()
+    out = deepcopy(A0)
+    Lambda = deepcopy(Lambda)
     for i in range(1, len(A0)-1):
         #print(f"\t{i}")
         prod = np.tensordot(A0[i], Lambda[i-1], [1,0])
@@ -102,7 +103,7 @@ def contract_diagonal_expansion_full(A0, A1):
     assert L == len(A1)
     out = [[] for i in range(L)]
 
-    R = A0[0].copy()
+    R = deepcopy(A0[0])
     for i in range(L-1):
         contracted = np.tensordot(R, A0[i+1], [3,2])
         contracted = np.tensordot(contracted, A1[i], [[1,4],[2,0]]).transpose(0,1,4,2,3,5)
@@ -144,7 +145,7 @@ def contract_series_diagonal_expansion(As, Lambda, n=None, mode='exact'):
             contracted = contract_diagonal_expansion_full(contracted, As[i])
         contracted = contract_diagonal_expansion_full(contracted, Lambda)
     if mode == 'top':
-        contracted = Lambda.copy()
+        contracted = deepcopy(Lambda)
         for i in range(n-1, -1, -1):
             contracted = contract_diagonal_expansion_top(As[i], contracted)
             contracted = mps_2form(contracted, form='A', svd_min=1.e-10)

@@ -5,9 +5,6 @@ U is a two site unitary. Indices 2 and 3 act on indices 1 and 2 of the TEBD
 style wavefunction theta. 
 """
 import numpy as onp
-import execnet
-from jax import grad, jit, vmap
-import jax.numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 from scipy.stats import unitary_group
@@ -28,7 +25,7 @@ def disentangle_S2(theta,eps = 1e-9, max_iter = 1000):
         if m > 1:
             go = Ss[-2] - Ss[-1] > eps
         m+=1
-    return theta, U.reshape([d1, d2, d1, d2])
+    return theta, U.reshape([d1, d2, d1, d2]), Ss
 
 def disentangle_brute(theta):
     warnings.warn("The brute disentangler doesn't work with complex values")
@@ -44,60 +41,6 @@ def disentangle_brute(theta):
     U = cayley(res.x, d1*d2).reshape([d1,d2,d1,d2])
     Utheta = onp.tensordot(U.conj(), theta, [[2,3],[1,2]]).transpose([2,0,1,3])
     return(Utheta, U)
-
-def call_python_version(Version, Module, Function, ArgumentList):
-    gw      = execnet.makegateway("popen//python=python%s" % Version)
-    channel = gw.remote_exec("""
-        from %s import %s as the_function
-        channel.send(the_function(*channel.receive()))
-    """ % (Module, Function))
-    channel.send(ArgumentList)
-    return channel.receive()
-
-def disentangle_CG_py3(psi,
-                  n=0.5,
-                  eps=1e-6,
-                  max_iter=100,
-                  verbose=0,
-                  beta=None,
-                  pt=0.5):
-    """
-    This is a thin python3 wrapper for the python2 code for MZ line search.
-    Returns psi, U, Ss
-    """
-    args = [psi,n,eps, max_iter, verbose, None, pt]
-    result = call_python_version("2.7", "disentangler.cgdisentangler",\
-        "disentangle_CG", args)
-    return result
-
-def disentangle_ls(theta, alpha=0.5, num_iter=100, tau=1.0):
-    # should the cost function maybe have theta embedded?
-    warnings.warn("This shit doesn't work for complex matrices")
-    grad_cost = grad(cost_function, argnums=0)
-    chiL, d0, d1, chiR = theta.shape
-    X = np.eye(d0*d1)
-    I = np.eye(d0*d1)
-    # TODO implement some kind of check + stop
-    for i in range(num_iter):
-        G = grad_cost(X, theta=theta, alpha=alpha)
-        A = G @ X.T.conj() - X @ G.T.conj()
-        Q = np.linalg.inv(I + 0.5*tau*A) @ (I - 0.5*tau*A)
-        X = Q @ X
-    Utheta = np.tensordot(X.reshape(d0,d1,d0,d1).conj(),\
-                          theta, [[2,3],[1,2]]).transpose((2,0,1,3))
-    return Utheta, X.reshape(d0,d1,d0,d1)
-
-@jit
-def cost_function(U, theta, alpha):
-    chiL, d0, d1, chiR = theta.shape
-    Utheta = np.tensordot(U.reshape(d0,d1,d0,d1).conj(), theta, [[2,3],[1,2]]).transpose((2,0,1,3))
-    return renyi_entropy_alpha(Utheta, alpha)
-
-@jit
-def renyi_entropy_alpha(theta, alpha):
-    chiL, pL, pR, chiR = theta.shape
-    s = np.linalg.svd(theta.reshape(chiL*pL, chiR*pR), compute_uv=False, full_matrices=False)
-    return (1. / (1. - alpha)) * np.log(np.sum(s**(2*alpha)))
 
 def initial_guess(mode, theta):
     """ Returns an initial guess for a Cayley parametrization of a D by D unitary.

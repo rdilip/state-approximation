@@ -13,7 +13,7 @@ from moses_simple import moses_move as moses_move_simple
 from moses_variational_shifted import moses_move as moses_move_shifted,\
                                       optimize_single_site_sweep_fast,\
                                       optimize_single_site_sweep_faster
-from disentanglers import disentangle_S2, disentangle_brute, disentangle_ls
+from disentanglers import disentangle_S2, disentangle_brute
 from tebd import tebd
 from glob import glob
 import pickle
@@ -101,8 +101,8 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2, num_sweeps=No
         eta = 2*max(sum([i.shape for i in Psi], ()))
     d = Psi[0].shape[0]
     # Grouping first and second tensor
-    Psi = Psi.copy()
-    Psi_copy = Psi.copy() # we do horrible things to Psi
+    Psi = deepcopy(Psi)
+    Psi_copy = deepcopy(Psi) # we do horrible things to Psi
     pW1, pE1, chiS1, chiN1 = Psi[0].shape
     pW2, pE2, chiS2, chiN2 = Psi[1].shape
     assert chiS2 == chiN1
@@ -152,14 +152,12 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2, num_sweeps=No
     psi = psi.reshape(d*pR*chiS,d)
     theta = psi.reshape(pR*chiS,d,d,1)
 
-     
-    Utheta, U = disentangler(theta)
-    debug = A0.copy()
-    A0[-1] = np.tensordot(A0[-1], U, [[1,3],[2,3]]).transpose([0,2,1,3])
+    
+    # might need to change U to U.conj()
+    Utheta, U, _ = disentangler(theta)
+    U = U.reshape(d1,d2,d1,d2).conj()
 
-    # NOTE: I think there may be a bug somewhere here, that we're only
-    # getting away with because everything is bond dimension 2... no evidence
-    # to suggest this but just have a feeling.
+    A0[-1] = np.tensordot(A0[-1], U, [[1,3],[2,3]]).transpose([0,2,1,3])
 
     psi = psi.reshape(d,pR,chiS,d,1,1)
     psi = np.tensordot(psi, U.conj(), [[0,3],[2,3]]).transpose([4,0,1,5,2,3])
@@ -169,7 +167,7 @@ def diagonal_expansion(Psi, eta=None, disentangler=disentangle_S2, num_sweeps=No
     # TODO change this
     X, s, Z, chi_c, _ = svd_theta_UsV(psi, eta, p_trunc=0.0)
     q = X
-    r = np.diag(s) @ Z
+    r = np.dot(np.diag(s), Z)
     #q, r = np.linalg.qr(psi)
 
     q = q.reshape(pL1, pR1, chiS, -1)
@@ -240,7 +238,7 @@ def multiple_diagonal_expansions(Psi,
 
     As, Lambdas = [], []
     L = len(Psi)
-    Lambda = Psi.copy()
+    Lambda = deepcopy(Psi)
     info = dict(Ss=[], Lambdas=[], fidelities=[])
     eta_max = max(sum([i.shape for i in Psi], ()))
     prev_eta = max_bond_dim
@@ -281,7 +279,7 @@ def multiple_diagonal_expansions(Psi,
                         prev_diff = diff
             elif schedule_mode == 'entropy_exact':
                 if verbose:
-                    print(f"Starting depth {i+1}")
+                    print("Starting depth 0".format(i+1))
                 A0_trial, Lambda_trial, F = diagonal_expansion(Lambda.copy(),
                                                                eta=10000,
                                                                num_sweeps=num_sweeps,
@@ -315,13 +313,13 @@ def multiple_diagonal_expansions(Psi,
 
         if prev_eta == 1:
             if verbose:
-                print(f"Reached product state after {i} iterations.")
+                print("Reached product state after {0} iterations.".format(i))
             break
 
         prev_eta = eta_max
         if eta_max == 1:
             num_sweeps *= 2
-        A0, Lambda, F = diagonal_expansion(Lambda.copy(), eta=eta_max, num_sweeps=num_sweeps,\
+        A0, Lambda, F = diagonal_expansion(deepcopy(Lambda), eta=eta_max, num_sweeps=num_sweeps,\
                                            final_run=(eta_max==1), disentangler=disentangler)
         As.append(A0)
 

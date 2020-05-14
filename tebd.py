@@ -85,7 +85,7 @@ def sweep(Psi, Ulist, ops=None):
         u, s, v = np.linalg.svd(Utheta.reshape(d1*chiL, chiR*d2),full_matrices=False)
         s /= np.linalg.norm(s)
         Psi[i] = u.reshape(d1, chiL, u.shape[-1])
-        Psi[i+1] = (np.diag(s) @ v).reshape(v.shape[0], d2, chiR).transpose([1,0,2])
+        Psi[i+1] = (np.diag(s).dot(v)).reshape(v.shape[0], d2, chiR).transpose([1,0,2])
 
         Ss.append(s)
         
